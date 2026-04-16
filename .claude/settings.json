@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet --version)",
+      "Bash(dotnet sdk *)",
+      "Bash(dotnet new *)",
+      "Bash(dotnet add *)",
+      "Bash(dotnet build *)",
+      "Bash(1\" /c/Users/1230075/.nuget/packages/elsa.workflows.runtime/3.6.0/lib/net10.0/Elsa.Workflows.Runtime.xml | head -20)",
+      "Bash(grep -r \"WorkflowInvokerExtensions\\\\|InvokeAsync.*TWorkflow\\\\|``1\\\\|`1\" /c/Users/1230075/.nuget/packages/elsa.workflows.runtime/3.6.0/lib/net10.0/Elsa.Workflows.Runtime.xml | head -20)",
+      "Bash(dotnet run *)"
+    ]
+  }
+}
