@@ -13,6 +13,8 @@
 
   <ItemGroup>
     <PackageReference Include="Elsa.Persistence.MongoDb" Version="3.6.*" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.6" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.7" />
   </ItemGroup>
 
 </Project>

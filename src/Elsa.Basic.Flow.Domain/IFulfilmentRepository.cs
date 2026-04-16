@@ -3,4 +3,5 @@ namespace Elsa.Basic.Flow.Domain;
 public interface IFulfilmentRepository
 {
     Task SaveAsync(FulfilmentAggregate aggregate, CancellationToken ct = default);
+    Task<FulfilmentAggregate?> GetByIdAsync(Guid id, CancellationToken ct = default);
 }
