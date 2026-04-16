@@ -1,5 +1,4 @@
 using Elsa.Basic.Flow.Services.Fulfilment;
-using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
 
@@ -9,7 +8,7 @@ namespace Elsa.Basic.Flow.Infrastructure;
 /// MongoDB-backed implementation of IPreparationCompletionTracker.
 /// State survives process restarts, making it safe for use with persisted Elsa workflows.
 /// </summary>
-public class MongoPreparationCompletionTracker([FromKeyedServices("domain")] IMongoDatabase db) : IPreparationCompletionTracker
+public class MongoPreparationCompletionTracker(IMongoDatabase db) : IPreparationCompletionTracker
 {
     private IMongoCollection<PrepTrackDocument> Col =>
         db.GetCollection<PrepTrackDocument>("prep_tracking");

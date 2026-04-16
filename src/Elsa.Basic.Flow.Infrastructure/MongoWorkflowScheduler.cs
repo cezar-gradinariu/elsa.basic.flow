@@ -1,5 +1,4 @@
 using Elsa.Scheduling;
-using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
 
@@ -11,7 +10,7 @@ namespace Elsa.Basic.Flow.Infrastructure;
 /// On restart, <see cref="SchedulerPollingService"/> picks up any overdue tasks
 /// and dispatches them immediately.
 /// </summary>
-public class MongoWorkflowScheduler([FromKeyedServices("domain")] IMongoDatabase db) : IWorkflowScheduler
+public class MongoWorkflowScheduler(IMongoDatabase db) : IWorkflowScheduler
 {
     private IMongoCollection<ScheduledTaskDocument> Col =>
         db.GetCollection<ScheduledTaskDocument>("elsa_scheduled_tasks");
@@ -44,7 +43,7 @@ public class MongoWorkflowScheduler([FromKeyedServices("domain")] IMongoDatabase
     public async ValueTask UnscheduleAsync(string taskName, CancellationToken cancellationToken = default)
     {
         await Col.DeleteOneAsync(d => d.TaskName == taskName, cancellationToken);
-        Console.WriteLine($"[MongoScheduler] Unscheduled '{taskName}'");
+        // intentionally silent — Elsa calls this twice per task (fire + cleanup)
     }
 
     // ── Unsupported overloads — not needed for embedded single-tenant Delay use case ──
