@@ -10,6 +10,7 @@ public class FulfilmentWorkflow : WorkflowBase
 {
     protected override void Build(IWorkflowBuilder builder)
     {
+        var fulfilmentId     = builder.WithVariable<string>();
         var allocationResult = builder.WithVariable<AllocationResult>();
         var prepareCommands  = builder.WithVariable<List<PrepareCommand>>();
 
@@ -19,7 +20,8 @@ public class FulfilmentWorkflow : WorkflowBase
             [
                 new AllocateFulfilmentActivity
                 {
-                    Result = new Output<AllocationResult>(allocationResult)
+                    FulfilmentId = new Output<string>(fulfilmentId),
+                    Result       = new Output<AllocationResult>(allocationResult)
                 },
                 new SendPrepareCommandsActivity
                 {
@@ -32,7 +34,10 @@ public class FulfilmentWorkflow : WorkflowBase
                 {
                     PrepareCommands = new Input<List<PrepareCommand>>(prepareCommands)
                 },
-                new CompleteFulfilmentActivity()
+                new CompleteFulfilmentActivity
+                {
+                    FulfilmentId = new Input<string>(fulfilmentId)
+                }
             ]
         };
     }

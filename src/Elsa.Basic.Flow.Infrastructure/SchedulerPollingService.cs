@@ -16,7 +16,7 @@ namespace Elsa.Basic.Flow.Infrastructure;
 /// claim-and-remove each task, preventing duplicate dispatches.
 /// </summary>
 public class SchedulerPollingService(
-    IMongoDatabase       db,
+    [FromKeyedServices("domain")] IMongoDatabase db,
     IServiceScopeFactory scopeFactory,
     ILogger<SchedulerPollingService> logger) : BackgroundService
 {

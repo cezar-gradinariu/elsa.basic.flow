@@ -27,6 +27,8 @@ var mongoSettings = builder.Configuration.GetSection("MongoDB");
 var mongoClient   = new MongoClient(mongoSettings["ConnectionString"]);
 
 builder.Services.AddSingleton<IMongoClient>(_ => mongoClient);
+builder.Services.AddKeyedScoped<IMongoDatabase>("domain", (_, _) =>
+    mongoClient.GetDatabase(mongoSettings["Database"]));
 
 // ── OpenAPI / Swagger ─────────────────────────────────────────────────────────
 builder.Services.AddOpenApi();
@@ -64,11 +66,6 @@ builder.Services.AddElsa(elsa =>
     elsa.AddWorkflow<FulfilmentWorkflow>();
     elsa.AddWorkflow<PreparationWorkflow>();
 });
-
-// Register domain IMongoDatabase after AddElsa so our fms database wins over
-// the fms-workflows database that Elsa.UseMongoDb registers.
-builder.Services.AddScoped<IMongoDatabase>(_ =>
-    mongoClient.GetDatabase(mongoSettings["Database"]));
 
 // ─────────────────────────────────────────────────────────────────────────────
 var app = builder.Build();

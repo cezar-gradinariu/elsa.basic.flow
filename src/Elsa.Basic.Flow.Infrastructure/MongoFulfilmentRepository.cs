@@ -1,9 +1,10 @@
 using Elsa.Basic.Flow.Domain;
+using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Driver;
 
 namespace Elsa.Basic.Flow.Infrastructure;
 
-public class MongoFulfilmentRepository(IMongoDatabase db) : IFulfilmentRepository
+public class MongoFulfilmentRepository([FromKeyedServices("domain")] IMongoDatabase db) : IFulfilmentRepository
 {
     private IMongoCollection<FulfilmentDocument> Col =>
         db.GetCollection<FulfilmentDocument>("fulfilments");

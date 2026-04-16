@@ -1,4 +1,5 @@
 using Elsa.Scheduling;
+using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
 
@@ -10,7 +11,7 @@ namespace Elsa.Basic.Flow.Infrastructure;
 /// On restart, <see cref="SchedulerPollingService"/> picks up any overdue tasks
 /// and dispatches them immediately.
 /// </summary>
-public class MongoWorkflowScheduler(IMongoDatabase db) : IWorkflowScheduler
+public class MongoWorkflowScheduler([FromKeyedServices("domain")] IMongoDatabase db) : IWorkflowScheduler
 {
     private IMongoCollection<ScheduledTaskDocument> Col =>
         db.GetCollection<ScheduledTaskDocument>("elsa_scheduled_tasks");
