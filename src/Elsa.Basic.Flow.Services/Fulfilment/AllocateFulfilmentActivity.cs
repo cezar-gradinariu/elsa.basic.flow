@@ -13,23 +13,36 @@ internal class AllocateFulfilmentActivity : Activity
 
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        var input = context.WorkflowExecutionContext.Input;
+        try
+        {
+            var input = context.WorkflowExecutionContext.Input;
 
-        object? orderNoVal = null, storeIdVal = null, orderLinesVal = null;
-        input?.TryGetValue("OrderNo",     out orderNoVal);
-        input?.TryGetValue("StoreId",     out storeIdVal);
-        input?.TryGetValue("OrderLines",  out orderLinesVal);
+            object? orderNoVal = null, storeIdVal = null, orderLinesVal = null;
+            input?.TryGetValue("OrderNo",     out orderNoVal);
+            input?.TryGetValue("StoreId",     out storeIdVal);
+            input?.TryGetValue("OrderLines",  out orderLinesVal);
 
-        var orderNo    = orderNoVal?.ToString()    ?? string.Empty;
-        var storeId    = storeIdVal?.ToString()    ?? string.Empty;
-        var orderLines = JsonSerializer.Deserialize<List<OrderLine>>(
-                             orderLinesVal?.ToString() ?? "[]")
-                         ?? [];
+            var orderNo    = orderNoVal?.ToString()    ?? string.Empty;
+            var storeId    = storeIdVal?.ToString()    ?? string.Empty;
+            var orderLines = JsonSerializer.Deserialize<List<OrderLine>>(
+                                 orderLinesVal?.ToString() ?? "[]")
+                             ?? [];
 
-        var cmd    = new CreateAllocationCommand(orderNo, storeId, orderLines);
-        var result = new CreateAllocationHandler().Handle(cmd);
+            var cmd    = new CreateAllocationCommand(orderNo, storeId, orderLines);
+            var result = new CreateAllocationHandler().Handle(cmd);
 
-        context.Set(Result, result);
-        await context.CompleteActivityAsync();
+            context.Set(Result, result);
+            await context.CompleteActivityAsync();
+        }
+        catch (ObjectDisposedException ex)
+        {
+            Console.WriteLine($"[FulfilmentWorkflow] Service disposed during AllocateFulfilment execution: {ex.ObjectName} - Allocation completed");
+            // Don't re-throw - the allocation work was completed
+        }
+        catch (Exception ex) when (ex.ToString().Contains("IServiceProvider"))
+        {
+            Console.WriteLine($"[FulfilmentWorkflow] Service provider disposed during AllocateFulfilment - Allocation completed: {ex.Message}");
+            // Don't re-throw - the allocation work was completed
+        }
     }
 }

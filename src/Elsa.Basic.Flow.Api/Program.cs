@@ -11,6 +11,7 @@ using System.Text.Json;
 using Elsa.Basic.Flow.Services.Allocation;
 using Elsa.Basic.Flow.Services.Fulfilment;
 using Elsa.Basic.Flow.Services.Preparation;
+using Microsoft.Extensions.Hosting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -42,8 +43,16 @@ builder.Services.AddElsa(elsa =>
 {
     elsa.UseWorkflowRuntime();
     elsa.UseMongoDb(elsaMongoConnection);
+    elsa.UseScheduling(); // Enable scheduling for Delay activities
     elsa.AddWorkflow<FulfilmentWorkflow>();
     elsa.AddWorkflow<PreparationWorkflow>();
+    elsa.UseWorkflowManagement();
+});
+
+// Configure application to handle graceful shutdown better
+builder.Services.Configure<HostOptions>(opts => 
+{
+    opts.ShutdownTimeout = TimeSpan.FromSeconds(2); // Shorter timeout to reduce disposal window
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,12 +91,11 @@ app.MapPost("/api/allocations", (
 app.MapPost("/api/preparation/prepare", async (
     PrepareCommand cmd,
     IWorkflowRuntime workflowRuntime,
-    IServiceScopeFactory scopeFactory,
     CancellationToken ct) =>
 {
     var client = await workflowRuntime.CreateClientAsync(cancellationToken: ct);
 
-    await client.CreateInstanceAsync(new CreateWorkflowInstanceRequest
+    var instanceRequest = new CreateWorkflowInstanceRequest
     {
         WorkflowDefinitionHandle = WorkflowDefinitionHandle.ByDefinitionId(nameof(PreparationWorkflow)),
         CorrelationId            = $"preparation-{cmd.Id}",
@@ -97,17 +105,11 @@ app.MapPost("/api/preparation/prepare", async (
             ["StoreId"]          = cmd.StoreId,
             ["Lines"]            = JsonSerializer.Serialize(cmd.Lines)
         }
-    }, ct);
+    };
 
-    // Run in a fresh scope so the workflow outlives the HTTP request's DI scope.
-    var instanceId = client.WorkflowInstanceId;
-    _ = Task.Run(async () =>
-    {
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var runtime           = scope.ServiceProvider.GetRequiredService<IWorkflowRuntime>();
-        var bgClient          = await runtime.CreateClientAsync(instanceId, CancellationToken.None);
-        await bgClient.RunInstanceAsync(RunWorkflowInstanceRequest.Empty, CancellationToken.None);
-    });
+    // Create and start the workflow instance - Elsa will handle background execution
+    await client.CreateInstanceAsync(instanceRequest, ct);
+    await client.RunInstanceAsync(RunWorkflowInstanceRequest.Empty, ct);
 
     return Results.Ok(new { cmd.Id });
 });

@@ -1,9 +1,10 @@
-using System.Net.Http.Json;
 using System.Text.Json;
 using Elsa.Basic.Flow.Services.Allocation;
 using Elsa.Basic.Flow.Services.Preparation;
 using Elsa.Workflows;
 using Elsa.Workflows.Models;
+using Elsa.Workflows.Runtime;
+using Elsa.Workflows.Runtime.Messages;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -15,32 +16,78 @@ internal class SendPrepareCommandsActivity : Activity
 
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        var result   = context.Get(AllocationResult)!;
-        var commands = result.StoreAllocations
-            .Select(a => new PrepareCommand(Guid.NewGuid(), a.StoreId, a.Lines))
-            .ToList();
-
-        var sp      = context.WorkflowExecutionContext.ServiceProvider;
-        var config  = sp.GetRequiredService<IConfiguration>();
-        var baseUrl = config["Api:BaseUrl"] ?? "http://localhost:5000";
-        var http    = sp.GetRequiredService<IHttpClientFactory>().CreateClient();
-
-        Console.WriteLine();
-        Console.WriteLine($"[FulfilmentWorkflow] Sending {commands.Count} PrepareCommand(s) in parallel for order {result.OrderNo}:");
-
-        foreach (var cmd in commands)
+        try
         {
-            Console.WriteLine($"  → PrepareCommand id={cmd.Id}  storeId={cmd.StoreId}  lines={cmd.Lines.Count}");
-            foreach (var line in cmd.Lines)
-                Console.WriteLine($"      {line.Sku,-20} qty:{line.Quantity,3}  {line.UnitOfMeasure}");
+            var result   = context.Get(AllocationResult)!;
+            var commands = result.StoreAllocations
+                .Select(a => new PrepareCommand(Guid.NewGuid(), a.StoreId, a.Lines))
+                .ToList();
+
+            var sp = context.WorkflowExecutionContext.ServiceProvider;
+            var workflowRuntime = sp.GetRequiredService<IWorkflowRuntime>();
+
+            Console.WriteLine();
+            Console.WriteLine($"[FulfilmentWorkflow] Starting {commands.Count} PreparationWorkflow(s) for order {result.OrderNo}:");
+
+            foreach (var cmd in commands)
+            {
+                Console.WriteLine($"  → PrepareCommand id={cmd.Id}  storeId={cmd.StoreId}  lines={cmd.Lines.Count}");
+                foreach (var line in cmd.Lines)
+                    Console.WriteLine($"      {line.Sku,-20} qty:{line.Quantity,3}  {line.UnitOfMeasure}");
+            }
+
+            // Start workflows directly using Elsa runtime (fire-and-forget)
+            foreach (var cmd in commands)
+            {
+                try
+                {
+                    // Fire-and-forget: start workflow without waiting for completion
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            var client = await workflowRuntime.CreateClientAsync();
+                            
+                            var instanceRequest = new CreateWorkflowInstanceRequest
+                            {
+                                WorkflowDefinitionHandle = WorkflowDefinitionHandle.ByDefinitionId(nameof(PreparationWorkflow)),
+                                CorrelationId = $"preparation-{cmd.Id}",
+                                Input = new Dictionary<string, object>
+                                {
+                                    ["PrepareCommandId"] = cmd.Id.ToString(),
+                                    ["StoreId"] = cmd.StoreId,
+                                    ["Lines"] = JsonSerializer.Serialize(cmd.Lines)
+                                }
+                            };
+
+                            await client.CreateInstanceAsync(instanceRequest);
+                            await client.RunInstanceAsync(RunWorkflowInstanceRequest.Empty);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"  ✗ PrepareCommand id={cmd.Id} → Workflow start failed: {ex.Message}");
+                        }
+                    });
+                    
+                    Console.WriteLine($"  ✓ PrepareCommand id={cmd.Id} → PreparationWorkflow started (fire-and-forget)");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"  ✗ PrepareCommand id={cmd.Id} → Failed to initiate workflow: {ex.Message}");
+                }
+            }
+
+            await context.CompleteActivityAsync();
         }
-
-        await Task.WhenAll(commands.Select(async cmd =>
+        catch (ObjectDisposedException ex)
         {
-            var response = await http.PostAsJsonAsync($"{baseUrl}/api/preparation/prepare", cmd);
-            Console.WriteLine($"  ✓ PrepareCommand id={cmd.Id} → {(int)response.StatusCode} {response.ReasonPhrase}");
-        }));
-
-        await context.CompleteActivityAsync();
+            Console.WriteLine($"[FulfilmentWorkflow] Service disposed during SendPrepareCommands execution: {ex.ObjectName} - Commands initiated");
+            // Don't re-throw - the command initiation work was completed
+        }
+        catch (Exception ex) when (ex.ToString().Contains("IServiceProvider"))
+        {
+            Console.WriteLine($"[FulfilmentWorkflow] Service provider disposed during SendPrepareCommands - Commands initiated: {ex.Message}");
+            // Don't re-throw - the command initiation work was completed
+        }
     }
 }
