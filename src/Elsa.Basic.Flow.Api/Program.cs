@@ -1,3 +1,4 @@
+using Elsa.Basic.Flow.Api;
 using Elsa.Basic.Flow.Domain;
 using Elsa.Basic.Flow.Infrastructure;
 using Elsa.Basic.Flow.Services;
@@ -46,6 +47,7 @@ builder.Services.AddElsa(elsa =>
     elsa.UseScheduling(); // Enable scheduling for Delay activities
     elsa.AddWorkflow<FulfilmentWorkflow>();
     elsa.AddWorkflow<PreparationWorkflow>();
+    elsa.AddWorkflow<PreparationOutcomeSubWorkflow>();
     elsa.UseWorkflowManagement();
 });
 
@@ -63,12 +65,20 @@ app.UseSwaggerUI(c => c.SwaggerEndpoint("/openapi/v1.json", "Elsa Basic Flow API
 app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
 
 app.MapPost("/api/fulfilments", async (
-    CreateFulfilmentCommand cmd,
+    CreateFulfilmentRequest request,
     CreateFulfilmentHandler handler,
     CancellationToken ct) =>
 {
+    var fulfilmentId = Guid.Parse(request.FulfilmentId);
+    var cmd = new CreateFulfilmentCommand(
+        FulfilmentId: fulfilmentId,
+        OrderNo: request.OrderId,
+        StoreNo: "STORE-DEFAULT", // Default store for this example
+        CustomerId: request.CustomerId,
+        OrderLines: request.Lines);
+    
     await handler.HandleAsync(cmd, ct);
-    return Results.Created($"/api/fulfilments/{cmd.FulfilmentId}", null);
+    return Results.Created($"/api/fulfilments/{fulfilmentId}", new { Id = fulfilmentId });
 });
 
 app.MapGet("/api/fulfilments/{id:guid}", async (
@@ -114,17 +124,47 @@ app.MapPost("/api/preparation/prepare", async (
     return Results.Ok(new { cmd.Id });
 });
 
-app.MapPost("/api/preparation-outcome", (PreparationOutcomePayload payload) =>
+app.MapPost("/api/preparation-outcome", async (PreparationOutcomePayload payload, IWorkflowRuntime workflowRuntime) =>
 {
     Console.WriteLine();
     Console.WriteLine($"[/api/preparation-outcome] Received outcome for preparation {payload.Id}  ({payload.Containers.Count} container(s)):");
     foreach (var c in payload.Containers)
     {
-        Console.WriteLine($"  [{c.ContainerId}] {c.ContainerType}  lines={c.AllocatedLines.Count}");
+        Console.WriteLine($"  📦 [{c.ContainerId}] {c.ContainerType}  lines={c.AllocatedLines.Count}");
         foreach (var l in c.AllocatedLines)
             Console.WriteLine($"      {l.OrderLineNo,-20} articleId:{l.ArticleId,-20} qty:{l.Quantity,3}");
     }
-    return Results.Ok();
+
+    try
+    {
+        // Start a new sub-workflow instance to handle this outcome
+        var correlationId = $"outcome-{payload.Id}";
+        Console.WriteLine($"[/api/preparation-outcome] Starting sub-workflow to handle outcome with correlation ID: {correlationId}");
+
+        var client = await workflowRuntime.CreateClientAsync();
+        var instanceRequest = new CreateWorkflowInstanceRequest
+        {
+            WorkflowDefinitionHandle = WorkflowDefinitionHandle.ByDefinitionId(nameof(PreparationOutcomeSubWorkflow)),
+            CorrelationId = correlationId,
+            Input = new Dictionary<string, object>
+            {
+                ["FulfilmentId"] = payload.FulfilmentId.ToString(), // Use real FulfilmentId from payload
+                ["PrepareCommandId"] = payload.Id.ToString(),
+                ["PreparationOutcome"] = System.Text.Json.JsonSerializer.Serialize(payload)
+            }
+        };
+
+        await client.CreateInstanceAsync(instanceRequest);
+        await client.RunInstanceAsync(RunWorkflowInstanceRequest.Empty);
+
+        Console.WriteLine($"[/api/preparation-outcome] ✓ Sub-workflow started successfully");
+        return Results.Ok();
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[/api/preparation-outcome] ✗ Error starting sub-workflow: {ex.Message}");
+        return Results.Problem($"Failed to start sub-workflow: {ex.Message}");
+    }
 });
 
 app.Run();

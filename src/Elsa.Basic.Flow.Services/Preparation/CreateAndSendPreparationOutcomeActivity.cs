@@ -12,6 +12,7 @@ internal class CreateAndSendPreparationOutcomeActivity : Activity
 {
     public Input<string>? PrepareCommandIdIn { get; set; }
     public Input<string>? LinesJsonIn { get; set; }
+    public Input<string>? FulfilmentIdIn { get; set; }
 
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
@@ -20,9 +21,12 @@ internal class CreateAndSendPreparationOutcomeActivity : Activity
             // Get data from workflow variables (persisted across delay suspension)
             var id = Guid.TryParse(context.Get(PrepareCommandIdIn), out var parsed) ? parsed : Guid.NewGuid();
             var linesJson = context.Get(LinesJsonIn) ?? "[]";
+            var fulfilmentIdStr = context.Get(FulfilmentIdIn) ?? "unknown-fulfilment-id";
+            var fulfilmentId = Guid.TryParse(fulfilmentIdStr, out var parsedFulfilmentId) ? parsedFulfilmentId : Guid.Empty;
             var lines = JsonSerializer.Deserialize<List<OrderLine>>(linesJson) ?? [];
 
             Console.WriteLine($"[PreparationWorkflow] CreateAndSend: Retrieved {lines.Count} order lines from workflow variables");
+            Console.WriteLine($"[PreparationWorkflow] CreateAndSend: FulfilmentId = {fulfilmentId}");
             
             if (lines.Count == 0)
             {
@@ -30,7 +34,7 @@ internal class CreateAndSendPreparationOutcomeActivity : Activity
             }
 
             var containers = BuildContainers(lines);
-            var payload    = new PreparationOutcomePayload(id, containers);
+            var payload    = new PreparationOutcomePayload(id, fulfilmentId, containers);
 
             LogPayload(id, containers);
 

@@ -18,7 +18,16 @@ internal class SendPrepareCommandsActivity : Activity
     {
         try
         {
-            var result   = context.Get(AllocationResult)!;
+            var result = context.Get(AllocationResult)!;
+            
+            // Get FulfilmentId from workflow input
+            var input = context.WorkflowExecutionContext.Input;
+            var fulfilmentId = "unknown-fulfilment-id";
+            if (input != null && input.TryGetValue("FulfilmentId", out var fulfilmentIdVal))
+            {
+                fulfilmentId = fulfilmentIdVal?.ToString() ?? "unknown-fulfilment-id";
+            }
+            
             var commands = result.StoreAllocations
                 .Select(a => new PrepareCommand(Guid.NewGuid(), a.StoreId, a.Lines))
                 .ToList();
@@ -36,19 +45,19 @@ internal class SendPrepareCommandsActivity : Activity
                     Console.WriteLine($"      {line.Sku,-20} qty:{line.Quantity,3}  {line.UnitOfMeasure}");
             }
 
-            // Start workflows directly using Elsa runtime (fire-and-forget)
+            // Start preparation workflows (fire-and-forget)
             foreach (var cmd in commands)
             {
                 try
                 {
-                    // Fire-and-forget: start workflow without waiting for completion
+                    // Start preparation workflow for actual preparation work (fire-and-forget)
                     _ = Task.Run(async () =>
                     {
                         try
                         {
                             var client = await workflowRuntime.CreateClientAsync();
                             
-                            var instanceRequest = new CreateWorkflowInstanceRequest
+                            var preparationRequest = new CreateWorkflowInstanceRequest
                             {
                                 WorkflowDefinitionHandle = WorkflowDefinitionHandle.ByDefinitionId(nameof(PreparationWorkflow)),
                                 CorrelationId = $"preparation-{cmd.Id}",
@@ -56,20 +65,21 @@ internal class SendPrepareCommandsActivity : Activity
                                 {
                                     ["PrepareCommandId"] = cmd.Id.ToString(),
                                     ["StoreId"] = cmd.StoreId,
-                                    ["Lines"] = JsonSerializer.Serialize(cmd.Lines)
+                                    ["Lines"] = JsonSerializer.Serialize(cmd.Lines),
+                                    ["FulfilmentId"] = fulfilmentId  // Pass FulfilmentId to PreparationWorkflow
                                 }
                             };
 
-                            await client.CreateInstanceAsync(instanceRequest);
+                            await client.CreateInstanceAsync(preparationRequest);
                             await client.RunInstanceAsync(RunWorkflowInstanceRequest.Empty);
+                            
+                            Console.WriteLine($"  ✓ PrepareCommand id={cmd.Id} → PreparationWorkflow started (fire-and-forget)");
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"  ✗ PrepareCommand id={cmd.Id} → Workflow start failed: {ex.Message}");
+                            Console.WriteLine($"  ✗ PrepareCommand id={cmd.Id} → PreparationWorkflow start failed: {ex.Message}");
                         }
                     });
-                    
-                    Console.WriteLine($"  ✓ PrepareCommand id={cmd.Id} → PreparationWorkflow started (fire-and-forget)");
                 }
                 catch (Exception ex)
                 {

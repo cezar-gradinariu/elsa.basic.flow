@@ -4,4 +4,5 @@ public interface IFulfilmentRepository
 {
     Task SaveAsync(FulfilmentAggregate aggregate, CancellationToken ct = default);
     Task<FulfilmentAggregate?> GetByIdAsync(Guid id, CancellationToken ct = default);
+    Task<FulfilmentAggregate?> LoadAsync(Guid id, CancellationToken ct = default);
 }

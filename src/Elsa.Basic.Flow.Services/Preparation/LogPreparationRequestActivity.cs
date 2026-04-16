@@ -10,6 +10,7 @@ internal class LogPreparationRequestActivity : Activity
     public int DelaySeconds { get; set; }
     public Output<string>? PrepareCommandIdOut { get; set; }
     public Output<string>? LinesJsonOut { get; set; }
+    public Output<string>? FulfilmentIdOut { get; set; }
 
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
@@ -17,22 +18,25 @@ internal class LogPreparationRequestActivity : Activity
         {
             var input = context.WorkflowExecutionContext.Input;
 
-            object? idVal = null, storeIdVal = null, linesVal = null;
+            object? idVal = null, storeIdVal = null, linesVal = null, fulfilmentIdVal = null;
             input?.TryGetValue("PrepareCommandId", out idVal);
             input?.TryGetValue("StoreId",          out storeIdVal);
             input?.TryGetValue("Lines",            out linesVal);
+            input?.TryGetValue("FulfilmentId",     out fulfilmentIdVal);
 
             var id      = idVal?.ToString()     ?? "(unknown)";
             var storeId = storeIdVal?.ToString() ?? "(unknown)";
             var linesJson = linesVal?.ToString() ?? "[]";
+            var fulfilmentId = fulfilmentIdVal?.ToString() ?? "(unknown)";
             var lines   = JsonSerializer.Deserialize<List<OrderLine>>(linesJson) ?? [];
 
             // Output to workflow variables for persistence across delays
             context.Set(PrepareCommandIdOut, id);
             context.Set(LinesJsonOut, linesJson);
+            context.Set(FulfilmentIdOut, fulfilmentId);
 
             Console.WriteLine();
-            Console.WriteLine($"[PreparationWorkflow] Received PrepareCommand id={id}  store={storeId}  lines={lines.Count}  delay={DelaySeconds}s");
+            Console.WriteLine($"[PreparationWorkflow] Received PrepareCommand id={id}  store={storeId}  lines={lines.Count}  delay={DelaySeconds}s  fulfilmentId={fulfilmentId}");
             foreach (var line in lines)
                 Console.WriteLine($"  {line.Sku,-20} qty:{line.Quantity,3}  {line.UnitOfMeasure}");
             

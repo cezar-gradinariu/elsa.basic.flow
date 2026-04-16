@@ -11,6 +11,7 @@ public class PreparationWorkflow : WorkflowBase
         var randomSeconds = Random.Shared.Next(5, 31);
         var prepareCommandId = builder.WithVariable<string>();
         var linesJson = builder.WithVariable<string>();
+        var fulfilmentId = builder.WithVariable<string>();
         
         builder.Root = new Sequence
         {
@@ -20,7 +21,8 @@ public class PreparationWorkflow : WorkflowBase
                 { 
                     DelaySeconds = randomSeconds,
                     PrepareCommandIdOut = new(prepareCommandId),
-                    LinesJsonOut = new(linesJson)
+                    LinesJsonOut = new(linesJson),
+                    FulfilmentIdOut = new(fulfilmentId)
                 },
                 new WriteLine($"[PreparationWorkflow] Starting delay of {randomSeconds} seconds..."),
                 new Delay(TimeSpan.FromSeconds(randomSeconds)),
@@ -28,7 +30,8 @@ public class PreparationWorkflow : WorkflowBase
                 new CreateAndSendPreparationOutcomeActivity
                 {
                     PrepareCommandIdIn = new(prepareCommandId),
-                    LinesJsonIn = new(linesJson)
+                    LinesJsonIn = new(linesJson),
+                    FulfilmentIdIn = new(fulfilmentId)
                 }
             ]
         };
