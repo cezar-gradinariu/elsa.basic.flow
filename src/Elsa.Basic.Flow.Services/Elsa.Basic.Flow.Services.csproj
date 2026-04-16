@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Elsa.Basic.Flow.Domain\Elsa.Basic.Flow.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Elsa" Version="3.6.*" />
+    <PackageReference Include="Elsa.Workflows.Runtime" Version="3.6.*" />
+  </ItemGroup>
+
+</Project>
