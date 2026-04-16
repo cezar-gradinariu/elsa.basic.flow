@@ -8,7 +8,9 @@
       "Bash(dotnet build *)",
       "Bash(1\" /c/Users/1230075/.nuget/packages/elsa.workflows.runtime/3.6.0/lib/net10.0/Elsa.Workflows.Runtime.xml | head -20)",
       "Bash(grep -r \"WorkflowInvokerExtensions\\\\|InvokeAsync.*TWorkflow\\\\|``1\\\\|`1\" /c/Users/1230075/.nuget/packages/elsa.workflows.runtime/3.6.0/lib/net10.0/Elsa.Workflows.Runtime.xml | head -20)",
-      "Bash(dotnet run *)"
+      "Bash(dotnet run *)",
+      "Bash(mkdir -p src/Elsa.Basic.Flow/Activities src/Elsa.Basic.Flow/App_Data/locks)",
+      "Bash(rm -rf Activities App_Data)"
     ]
   }
 }
