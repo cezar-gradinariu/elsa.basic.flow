@@ -6,6 +6,9 @@ using Elsa.Extensions;
 using Elsa.Persistence.MongoDb.Extensions;
 using Elsa.Workflows.Runtime;
 using Elsa.Workflows.Runtime.Messages;
+using Elsa.Workflows.Runtime.Requests;
+using Elsa.Workflows.Runtime.Responses;
+using Elsa.Workflows.Runtime.Stimuli;
 using Elsa.Workflows.Models;
 using MongoDB.Driver;
 using System.Text.Json;
@@ -36,6 +39,7 @@ builder.Services.AddScoped<IFulfilmentRepository, MongoFulfilmentRepository>();
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<CreateFulfilmentHandler>();
 builder.Services.AddScoped<CreateAllocationHandler>();
+builder.Services.AddSingleton<IPreparationCompletionTracker, InMemoryPreparationCompletionTracker>();
 
 // ── Elsa (with MongoDB persistence) ──────────────────────────────────────────
 var elsaMongoConnection = builder.Configuration.GetConnectionString("ElsaMongo")!;
@@ -94,6 +98,15 @@ app.MapPost("/api/allocations", (
     CreateAllocationCommand cmd,
     CreateAllocationHandler handler) =>
 {
+    // Intentional failure: fail if current second is divisible by 3
+    if (DateTime.UtcNow.Second % 3 == 0)
+    {
+        return Results.Problem(
+            title: "Allocation Service Temporarily Unavailable",
+            detail: "Service is experiencing temporary issues. Please try again in a few seconds.",
+            statusCode: 503);
+    }
+
     var result = handler.Handle(cmd);
     return Results.Ok(result);
 });
@@ -113,7 +126,8 @@ app.MapPost("/api/preparation/prepare", async (
         {
             ["PrepareCommandId"] = cmd.Id.ToString(),
             ["StoreId"]          = cmd.StoreId,
-            ["Lines"]            = JsonSerializer.Serialize(cmd.Lines)
+            ["Lines"]            = JsonSerializer.Serialize(cmd.Lines),
+            ["FulfilmentId"]     = cmd.FulfilmentId
         }
     };
 
@@ -124,7 +138,11 @@ app.MapPost("/api/preparation/prepare", async (
     return Results.Ok(new { cmd.Id });
 });
 
-app.MapPost("/api/preparation-outcome", async (PreparationOutcomePayload payload, IWorkflowRuntime workflowRuntime) =>
+app.MapPost("/api/preparation-outcome", async (
+    PreparationOutcomePayload payload, 
+    IWorkflowRuntime workflowRuntime,
+    IPreparationCompletionTracker tracker,
+    IStimulusSender stimulusSender) =>
 {
     Console.WriteLine();
     Console.WriteLine($"[/api/preparation-outcome] Received outcome for preparation {payload.Id}  ({payload.Containers.Count} container(s)):");
@@ -137,33 +155,42 @@ app.MapPost("/api/preparation-outcome", async (PreparationOutcomePayload payload
 
     try
     {
-        // Start a new sub-workflow instance to handle this outcome
-        var correlationId = $"outcome-{payload.Id}";
-        Console.WriteLine($"[/api/preparation-outcome] Starting sub-workflow to handle outcome with correlation ID: {correlationId}");
-
-        var client = await workflowRuntime.CreateClientAsync();
-        var instanceRequest = new CreateWorkflowInstanceRequest
+        // Mark this preparation as completed and check if all are done
+        var allCompleted = await tracker.MarkCompleted(payload.Id.ToString(), out var workflowInstanceId);
+        
+        if (workflowInstanceId == null)
         {
-            WorkflowDefinitionHandle = WorkflowDefinitionHandle.ByDefinitionId(nameof(PreparationOutcomeSubWorkflow)),
-            CorrelationId = correlationId,
-            Input = new Dictionary<string, object>
-            {
-                ["FulfilmentId"] = payload.FulfilmentId.ToString(), // Use real FulfilmentId from payload
-                ["PrepareCommandId"] = payload.Id.ToString(),
-                ["PreparationOutcome"] = System.Text.Json.JsonSerializer.Serialize(payload)
-            }
-        };
+            Console.WriteLine($"[/api/preparation-outcome] ⚠️  No workflow found tracking preparation {payload.Id}");
+            return Results.Ok();
+        }
 
-        await client.CreateInstanceAsync(instanceRequest);
-        await client.RunInstanceAsync(RunWorkflowInstanceRequest.Empty);
+        if (allCompleted)
+        {
+            Console.WriteLine($"[/api/preparation-outcome] All preparations completed for workflow {workflowInstanceId} - sending completion signal");
+            
+            // Send event signal to resume the workflow
+            await stimulusSender.SendAsync(
+                "Elsa.Event",
+                new EventStimulus("preparations-all-completed"),
+                new StimulusMetadata { WorkflowInstanceId = workflowInstanceId }
+            );
+            
+            // Clean up tracking data
+            await tracker.Cleanup(workflowInstanceId);
+            
+            Console.WriteLine($"[/api/preparation-outcome] ✓ FulfilmentWorkflow {workflowInstanceId} signal sent successfully");
+        }
+        else
+        {
+            Console.WriteLine($"[/api/preparation-outcome] Preparation {payload.Id} completed, but workflow {workflowInstanceId} still waiting for more preparations");
+        }
 
-        Console.WriteLine($"[/api/preparation-outcome] ✓ Sub-workflow started successfully");
         return Results.Ok();
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"[/api/preparation-outcome] ✗ Error starting sub-workflow: {ex.Message}");
-        return Results.Problem($"Failed to start sub-workflow: {ex.Message}");
+        Console.WriteLine($"[/api/preparation-outcome] ✗ Error processing outcome: {ex.Message}");
+        return Results.Problem($"Failed to process outcome: {ex.Message}");
     }
 });
 

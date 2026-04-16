@@ -1,10 +1,10 @@
 using System.Text.Json;
+using System.Net.Http.Json;
 using Elsa.Basic.Flow.Services.Allocation;
 using Elsa.Basic.Flow.Services.Preparation;
 using Elsa.Workflows;
+using Elsa.Workflows.Activities;
 using Elsa.Workflows.Models;
-using Elsa.Workflows.Runtime;
-using Elsa.Workflows.Runtime.Messages;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -13,6 +13,7 @@ namespace Elsa.Basic.Flow.Services.Fulfilment;
 internal class SendPrepareCommandsActivity : Activity
 {
     public Input<AllocationResult>? AllocationResult { get; set; }
+    public Output<List<PrepareCommand>>? PrepareCommands { get; set; }
 
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
@@ -29,14 +30,11 @@ internal class SendPrepareCommandsActivity : Activity
             }
             
             var commands = result.StoreAllocations
-                .Select(a => new PrepareCommand(Guid.NewGuid(), a.StoreId, a.Lines))
+                .Select(a => new PrepareCommand(Guid.NewGuid(), a.StoreId, a.Lines, fulfilmentId))
                 .ToList();
 
-            var sp = context.WorkflowExecutionContext.ServiceProvider;
-            var workflowRuntime = sp.GetRequiredService<IWorkflowRuntime>();
-
             Console.WriteLine();
-            Console.WriteLine($"[FulfilmentWorkflow] Starting {commands.Count} PreparationWorkflow(s) for order {result.OrderNo}:");
+            Console.WriteLine($"[FulfilmentWorkflow] Creating {commands.Count} preparation request(s) for order {result.OrderNo}:");
 
             foreach (var cmd in commands)
             {
@@ -45,59 +43,38 @@ internal class SendPrepareCommandsActivity : Activity
                     Console.WriteLine($"      {line.Sku,-20} qty:{line.Quantity,3}  {line.UnitOfMeasure}");
             }
 
-            // Start preparation workflows (fire-and-forget)
+            // Store commands for next activity and trigger external preparation requests
+            context.Set(PrepareCommands, commands);
+            
+            // Trigger external preparation via HTTP (non-blocking)
+            var httpClientFactory = context.WorkflowExecutionContext.ServiceProvider.GetRequiredService<IHttpClientFactory>();
+            var config = context.WorkflowExecutionContext.ServiceProvider.GetRequiredService<IConfiguration>();
+            var baseUrl = config["Api:BaseUrl"] ?? "http://localhost:5000";
+            
+            using var httpClient = httpClientFactory.CreateClient();
+            httpClient.Timeout = TimeSpan.FromSeconds(10);
+            
             foreach (var cmd in commands)
             {
                 try
                 {
-                    // Start preparation workflow for actual preparation work (fire-and-forget)
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            var client = await workflowRuntime.CreateClientAsync();
-                            
-                            var preparationRequest = new CreateWorkflowInstanceRequest
-                            {
-                                WorkflowDefinitionHandle = WorkflowDefinitionHandle.ByDefinitionId(nameof(PreparationWorkflow)),
-                                CorrelationId = $"preparation-{cmd.Id}",
-                                Input = new Dictionary<string, object>
-                                {
-                                    ["PrepareCommandId"] = cmd.Id.ToString(),
-                                    ["StoreId"] = cmd.StoreId,
-                                    ["Lines"] = JsonSerializer.Serialize(cmd.Lines),
-                                    ["FulfilmentId"] = fulfilmentId  // Pass FulfilmentId to PreparationWorkflow
-                                }
-                            };
-
-                            await client.CreateInstanceAsync(preparationRequest);
-                            await client.RunInstanceAsync(RunWorkflowInstanceRequest.Empty);
-                            
-                            Console.WriteLine($"  ✓ PrepareCommand id={cmd.Id} → PreparationWorkflow started (fire-and-forget)");
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"  ✗ PrepareCommand id={cmd.Id} → PreparationWorkflow start failed: {ex.Message}");
-                        }
-                    });
+                    // Fire-and-forget HTTP call to trigger external preparation
+                    var response = await httpClient.PostAsJsonAsync($"{baseUrl}/api/preparation/prepare", cmd);
+                    var status = response.IsSuccessStatusCode ? "✓" : "✗";
+                    Console.WriteLine($"  {status} PrepareCommand id={cmd.Id} → External preparation triggered ({response.StatusCode})");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"  ✗ PrepareCommand id={cmd.Id} → Failed to initiate workflow: {ex.Message}");
+                    Console.WriteLine($"  ✗ PrepareCommand id={cmd.Id} → Failed to trigger preparation: {ex.Message}");
                 }
             }
 
             await context.CompleteActivityAsync();
         }
-        catch (ObjectDisposedException ex)
+        catch (Exception ex)
         {
-            Console.WriteLine($"[FulfilmentWorkflow] Service disposed during SendPrepareCommands execution: {ex.ObjectName} - Commands initiated");
-            // Don't re-throw - the command initiation work was completed
-        }
-        catch (Exception ex) when (ex.ToString().Contains("IServiceProvider"))
-        {
-            Console.WriteLine($"[FulfilmentWorkflow] Service provider disposed during SendPrepareCommands - Commands initiated: {ex.Message}");
-            // Don't re-throw - the command initiation work was completed
+            Console.WriteLine($"[FulfilmentWorkflow] Error in SendPrepareCommands: {ex.Message}");
+            throw; // Re-throw to let workflow engine handle retries
         }
     }
 }
