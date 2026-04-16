@@ -14,7 +14,14 @@
       "Bash(dotnet sln *)",
       "Bash(dotnet package *)",
       "Bash(dotnet restore *)",
-      "Bash(xargs grep *)"
+      "Bash(xargs grep *)",
+      "Bash(cat)",
+      "Bash(dotnet script *)",
+      "Bash(dotnet csi *)",
+      "Bash(mkdir -p /tmp/ElsaCheck)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\1230075\\AppData\\Local\\Temp\\ElsaCheck"
     ]
   }
 }

@@ -1,8 +1,9 @@
+using Elsa.Basic.Flow.Services.Allocation;
 using Elsa.Workflows;
 using Elsa.Workflows.Activities;
 using Elsa.Workflows.Models;
 
-namespace Elsa.Basic.Flow.Services;
+namespace Elsa.Basic.Flow.Services.Fulfilment;
 
 public class FulfilmentWorkflow : WorkflowBase
 {
@@ -18,7 +19,7 @@ public class FulfilmentWorkflow : WorkflowBase
                 {
                     Result = new Output<AllocationResult>(allocationResult)
                 },
-                new LogPrepareCommandsActivity
+                new SendPrepareCommandsActivity
                 {
                     AllocationResult = new Input<AllocationResult>(allocationResult)
                 }

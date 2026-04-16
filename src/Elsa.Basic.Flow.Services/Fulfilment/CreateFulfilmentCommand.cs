@@ -1,6 +1,6 @@
 using Elsa.Basic.Flow.Domain;
 
-namespace Elsa.Basic.Flow.Services;
+namespace Elsa.Basic.Flow.Services.Fulfilment;
 
 public record CreateFulfilmentCommand(
     Guid   FulfilmentId,

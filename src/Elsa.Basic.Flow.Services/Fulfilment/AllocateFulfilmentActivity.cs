@@ -1,10 +1,11 @@
 using System.Text.Json;
 using Elsa.Basic.Flow.Domain;
+using Elsa.Basic.Flow.Services.Allocation;
 using Elsa.Workflows;
 using Elsa.Workflows.Attributes;
 using Elsa.Workflows.Models;
 
-namespace Elsa.Basic.Flow.Services;
+namespace Elsa.Basic.Flow.Services.Fulfilment;
 
 internal class AllocateFulfilmentActivity : Activity
 {
