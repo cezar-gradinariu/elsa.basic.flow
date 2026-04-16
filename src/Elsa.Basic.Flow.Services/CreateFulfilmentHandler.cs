@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Elsa.Basic.Flow.Domain;
 using Elsa.Workflows.Models;
 using Elsa.Workflows.Runtime;
@@ -25,12 +26,13 @@ public class CreateFulfilmentHandler(
         await client.CreateAndRunInstanceAsync(new CreateAndRunWorkflowInstanceRequest
         {
             WorkflowDefinitionHandle = WorkflowDefinitionHandle.ByDefinitionId(nameof(FulfilmentWorkflow)),
-            CorrelationId            = cmd.FulfilmentId.ToString(),
+            CorrelationId            = $"fulfilment-{cmd.FulfilmentId}",
             Input = new Dictionary<string, object>
             {
                 ["FulfilmentId"] = cmd.FulfilmentId.ToString(),
                 ["OrderNo"]      = cmd.OrderNo,
-                ["StoreNo"]      = cmd.StoreNo
+                ["StoreId"]      = cmd.StoreNo,
+                ["OrderLines"]   = JsonSerializer.Serialize(cmd.OrderLines)
             }
         }, ct);
     }
