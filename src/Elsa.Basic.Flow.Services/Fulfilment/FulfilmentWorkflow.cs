@@ -2,7 +2,6 @@ using Elsa.Basic.Flow.Services.Allocation;
 using Elsa.Basic.Flow.Services.Preparation;
 using Elsa.Workflows;
 using Elsa.Workflows.Activities;
-using Elsa.Workflows.Runtime.Activities;
 using Elsa.Workflows.Models;
 
 namespace Elsa.Basic.Flow.Services.Fulfilment;
@@ -12,8 +11,7 @@ public class FulfilmentWorkflow : WorkflowBase
     protected override void Build(IWorkflowBuilder builder)
     {
         var allocationResult = builder.WithVariable<AllocationResult>();
-        var prepareCommands = builder.WithVariable<List<PrepareCommand>>();
-        var completedCount = builder.WithVariable<int>();
+        var prepareCommands  = builder.WithVariable<List<PrepareCommand>>();
 
         builder.Root = new Sequence
         {
@@ -26,14 +24,14 @@ public class FulfilmentWorkflow : WorkflowBase
                 new SendPrepareCommandsActivity
                 {
                     AllocationResult = new Input<AllocationResult>(allocationResult),
-                    PrepareCommands = new Output<List<PrepareCommand>>(prepareCommands)
+                    PrepareCommands  = new Output<List<PrepareCommand>>(prepareCommands)
                 },
+                // Registers the tracker and creates the Event bookmark atomically,
+                // then suspends until all preparations signal completion.
                 new WaitForPreparationsActivity
                 {
-                    PrepareCommands = new Input<List<PrepareCommand>>(prepareCommands),
-                    CompletedCount = new Output<int>(completedCount)
+                    PrepareCommands = new Input<List<PrepareCommand>>(prepareCommands)
                 },
-                new Event("preparations-all-completed"),
                 new CompleteFulfilmentActivity()
             ]
         };

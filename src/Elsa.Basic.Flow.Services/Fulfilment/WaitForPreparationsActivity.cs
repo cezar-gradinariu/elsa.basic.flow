@@ -1,44 +1,51 @@
 using Elsa.Basic.Flow.Services.Preparation;
 using Elsa.Workflows;
-using Elsa.Workflows.Activities;
 using Elsa.Workflows.Models;
-using Microsoft.Extensions.DependencyInjection;
+using Elsa.Workflows.Runtime;
+using Elsa.Workflows.Runtime.Stimuli;
 
 namespace Elsa.Basic.Flow.Services.Fulfilment;
 
+/// <summary>
+/// Atomically registers the expected preparations with the completion tracker and creates
+/// the Event bookmark that the /api/preparation-outcome endpoint will signal when all are done.
+/// Combining both steps in one ExecuteAsync eliminates the race condition that would exist if
+/// tracker registration and bookmark creation were separate activities.
+/// </summary>
 internal class WaitForPreparationsActivity : Activity
 {
+    private const string EventName = "preparations-all-completed";
+
     public Input<List<PrepareCommand>>? PrepareCommands { get; set; }
-    public Output<int>? CompletedCount { get; set; }
 
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        try
-        {
-            var commands = context.Get(PrepareCommands)!;
-            var workflowInstanceId = context.WorkflowExecutionContext.Id;
-            
-            Console.WriteLine($"[FulfilmentWorkflow] Waiting for {commands.Count} preparation(s) to complete...");
-            
-            // Register preparations with the completion tracker
-            var tracker = context.WorkflowExecutionContext.ServiceProvider.GetRequiredService<IPreparationCompletionTracker>();
-            var preparationIds = commands.Select(c => c.Id.ToString()).ToList();
-            
-            await tracker.RegisterPreparations(workflowInstanceId, preparationIds);
-            
-            // Set initial completed count to 0
-            context.Set(CompletedCount, 0);
-            
-            Console.WriteLine($"  → Registered {preparationIds.Count} preparations for tracking");
-            Console.WriteLine($"  → Tracking preparations: {string.Join(", ", preparationIds)}");
-            Console.WriteLine($"[FulfilmentWorkflow] Initial setup complete - workflow will continue to wait for events...");
+        var commands           = context.Get(PrepareCommands)!;
+        var workflowInstanceId = context.WorkflowExecutionContext.Id;
+        var tracker            = context.GetRequiredService<IPreparationCompletionTracker>();
+        var preparationIds     = commands.Select(c => c.Id.ToString()).ToList();
 
-            await context.CompleteActivityAsync();
-        }
-        catch (Exception ex)
+        // Register first — then create the bookmark in the same execution step so that
+        // both changes are persisted atomically by Elsa before any preparation can signal back.
+        await tracker.RegisterPreparations(workflowInstanceId, preparationIds);
+
+        Console.WriteLine($"[FulfilmentWorkflow] Registered {preparationIds.Count} preparation(s), suspending until all complete...");
+
+        // Create a bookmark that is hash-compatible with Elsa's Event activity so the
+        // existing IStimulusSender call in /api/preparation-outcome resumes this activity.
+        context.CreateBookmark(new CreateBookmarkArgs
         {
-            Console.WriteLine($"[FulfilmentWorkflow] Error in WaitForPreparations: {ex.Message}");
-            throw;
-        }
+            BookmarkName = RuntimeStimulusNames.Event,
+            Stimulus     = new EventStimulus(EventName),
+            Callback     = OnPreparationsCompletedAsync,
+            AutoBurn     = true
+        });
+        // No CompleteActivityAsync — the activity stays suspended until the bookmark is resumed.
+    }
+
+    private async ValueTask OnPreparationsCompletedAsync(ActivityExecutionContext context)
+    {
+        Console.WriteLine("[FulfilmentWorkflow] All preparations completed signal received — continuing workflow.");
+        await context.CompleteActivityAsync();
     }
 }

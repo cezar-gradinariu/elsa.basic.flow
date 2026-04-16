@@ -4,75 +4,51 @@ using Elsa.Basic.Flow.Domain;
 using Elsa.Workflows;
 using Elsa.Workflows.Models;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Elsa.Basic.Flow.Services.Preparation;
 
 internal class CreateAndSendPreparationOutcomeActivity : Activity
 {
     public Input<string>? PrepareCommandIdIn { get; set; }
-    public Input<string>? LinesJsonIn { get; set; }
-    public Input<string>? FulfilmentIdIn { get; set; }
+    public Input<string>? LinesJsonIn        { get; set; }
+    public Input<string>? FulfilmentIdIn     { get; set; }
 
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        try
-        {
-            // Get data from workflow variables (persisted across delay suspension)
-            var id = Guid.TryParse(context.Get(PrepareCommandIdIn), out var parsed) ? parsed : Guid.NewGuid();
-            var linesJson = context.Get(LinesJsonIn) ?? "[]";
-            var fulfilmentIdStr = context.Get(FulfilmentIdIn) ?? "unknown-fulfilment-id";
-            var fulfilmentId = Guid.TryParse(fulfilmentIdStr, out var parsedFulfilmentId) ? parsedFulfilmentId : Guid.Empty;
-            var lines = JsonSerializer.Deserialize<List<OrderLine>>(linesJson) ?? [];
+        var id           = Guid.TryParse(context.Get(PrepareCommandIdIn), out var parsed) ? parsed : Guid.NewGuid();
+        var linesJson    = context.Get(LinesJsonIn)    ?? "[]";
+        var fulfilmentId = Guid.TryParse(context.Get(FulfilmentIdIn), out var pf) ? pf : Guid.Empty;
+        var lines        = JsonSerializer.Deserialize<List<OrderLine>>(linesJson) ?? [];
 
-            Console.WriteLine($"[PreparationWorkflow] CreateAndSend: Retrieved {lines.Count} order lines from workflow variables");
-            Console.WriteLine($"[PreparationWorkflow] CreateAndSend: FulfilmentId = {fulfilmentId}");
-            
-            if (lines.Count == 0)
-            {
-                Console.WriteLine($"[PreparationWorkflow] ⚠️  WARNING: Lines data is empty after retrieving from variables! linesJson: '{linesJson}'");
-            }
+        if (lines.Count == 0)
+            Console.WriteLine($"[PreparationWorkflow] ⚠️  No lines for preparation {id}");
 
-            var containers = BuildContainers(lines);
-            var payload    = new PreparationOutcomePayload(id, fulfilmentId, containers);
+        var containers = BuildContainers(lines);
+        var payload    = new PreparationOutcomePayload(id, fulfilmentId, containers);
 
-            LogPayload(id, containers);
+        LogPayload(id, containers);
 
-            var sp       = context.WorkflowExecutionContext.ServiceProvider;
-            var config   = sp.GetRequiredService<IConfiguration>();
-            var baseUrl  = config["Api:BaseUrl"] ?? "http://localhost:5000";
-            var factory  = sp.GetRequiredService<IHttpClientFactory>();
-            var http     = factory.CreateClient();
+        var config   = context.GetRequiredService<IConfiguration>();
+        var factory  = context.GetRequiredService<IHttpClientFactory>();
+        var baseUrl  = config["Api:BaseUrl"] ?? "http://localhost:5000";
 
-            // Set timeout to prevent hanging if services are disposing
-            http.Timeout = TimeSpan.FromSeconds(30);
+        using var http = factory.CreateClient();
+        http.Timeout = TimeSpan.FromSeconds(30);
 
-            var response = await http.PostAsJsonAsync($"{baseUrl}/api/preparation-outcome", payload);
-            Console.WriteLine($"[PreparationWorkflow] POST /api/preparation-outcome → {(int)response.StatusCode} {response.ReasonPhrase}");
+        var response = await http.PostAsJsonAsync($"{baseUrl}/api/preparation-outcome", payload);
+        Console.WriteLine($"[PreparationWorkflow] POST /api/preparation-outcome → {(int)response.StatusCode} {response.ReasonPhrase}");
 
-            await context.CompleteActivityAsync();
-        }
-        catch (ObjectDisposedException ex)
-        {
-            Console.WriteLine($"[PreparationWorkflow] Service disposed during CreateAndSendOutcome execution: {ex.ObjectName} - Outcome work completed");
-            // Don't re-throw - the outcome work was completed
-        }
-        catch (Exception ex) when (ex.ToString().Contains("IServiceProvider"))
-        {
-            Console.WriteLine($"[PreparationWorkflow] Service provider disposed during CreateAndSendOutcome - Outcome work completed: {ex.Message}");
-            // Don't re-throw - the outcome work was completed
-        }
+        await context.CompleteActivityAsync();
     }
 
     private static List<PreparationContainer> BuildContainers(List<OrderLine> lines)
     {
-        if (lines.Count == 0)
-            return [];
+        if (lines.Count == 0) return [];
 
         var containerCount = Random.Shared.Next(1, Math.Min(4, lines.Count + 1));
-        var buckets        = Enumerable.Range(0, containerCount)
-                                       .Select(_ => new List<AllocatedLine>())
-                                       .ToList();
+        var buckets = Enumerable.Range(0, containerCount)
+            .Select(_ => new List<AllocatedLine>())
+            .ToList();
 
         for (var i = 0; i < lines.Count; i++)
         {
@@ -81,7 +57,6 @@ internal class CreateAndSendPreparationOutcomeActivity : Activity
         }
 
         var containerTypes = Enum.GetValues<ContainerType>();
-
         return buckets
             .Select((bucket, i) => new PreparationContainer(
                 ContainerId:    $"CONT-{i + 1:D2}",
@@ -92,12 +67,12 @@ internal class CreateAndSendPreparationOutcomeActivity : Activity
 
     private static void LogPayload(Guid id, List<PreparationContainer> containers)
     {
-        Console.WriteLine($"[PreparationWorkflow] Outcome for preparation {id}  ({containers.Count} container(s)):");
-        foreach (var container in containers)
+        Console.WriteLine($"[PreparationWorkflow] Outcome for {id} ({containers.Count} container(s)):");
+        foreach (var c in containers)
         {
-            Console.WriteLine($"  📦 {container.ContainerId} ({container.ContainerType})  lines={container.AllocatedLines.Count}");
-            foreach (var line in container.AllocatedLines)
-                Console.WriteLine($"    {line.OrderLineNo,-15} qty:{line.Quantity,3}");
+            Console.WriteLine($"  📦 {c.ContainerId} ({c.ContainerType})  lines={c.AllocatedLines.Count}");
+            foreach (var l in c.AllocatedLines)
+                Console.WriteLine($"    {l.OrderLineNo,-15} qty:{l.Quantity,3}");
         }
     }
 }

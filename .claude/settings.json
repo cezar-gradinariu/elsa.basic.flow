@@ -18,10 +18,17 @@
       "Bash(cat)",
       "Bash(dotnet script *)",
       "Bash(dotnet csi *)",
-      "Bash(mkdir -p /tmp/ElsaCheck)"
+      "Bash(mkdir -p /tmp/ElsaCheck)",
+      "WebFetch(domain:docs.elsaworkflows.io)",
+      "Bash(find ~/.nuget/packages/elsa.workflows.runtime/3.6* -name \"*.dll\")",
+      "Bash(unzip -p elsa.workflows.runtime.3.6.0.nupkg '*.cs')",
+      "Bash(unzip -l elsa.workflows.runtime.3.6.0.nupkg)",
+      "Bash(dotnet tool *)",
+      "Bash(powershell -Command ' *)"
     ],
     "additionalDirectories": [
-      "C:\\Users\\1230075\\AppData\\Local\\Temp\\ElsaCheck"
+      "C:\\Users\\1230075\\AppData\\Local\\Temp\\ElsaCheck",
+      "\\tmp"
     ]
   }
 }

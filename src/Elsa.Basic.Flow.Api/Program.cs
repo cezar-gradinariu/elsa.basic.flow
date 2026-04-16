@@ -2,20 +2,14 @@ using Elsa.Basic.Flow.Api;
 using Elsa.Basic.Flow.Domain;
 using Elsa.Basic.Flow.Infrastructure;
 using Elsa.Basic.Flow.Services;
-using Elsa.Extensions;
-using Elsa.Persistence.MongoDb.Extensions;
-using Elsa.Workflows.Runtime;
-using Elsa.Workflows.Runtime.Messages;
-using Elsa.Workflows.Runtime.Requests;
-using Elsa.Workflows.Runtime.Responses;
-using Elsa.Workflows.Runtime.Stimuli;
-using Elsa.Workflows.Models;
-using MongoDB.Driver;
-using System.Text.Json;
 using Elsa.Basic.Flow.Services.Allocation;
 using Elsa.Basic.Flow.Services.Fulfilment;
 using Elsa.Basic.Flow.Services.Preparation;
-using Microsoft.Extensions.Hosting;
+using Elsa.Extensions;
+using Elsa.Persistence.MongoDb.Extensions;
+using Elsa.Workflows.Runtime;
+using Elsa.Workflows.Runtime.Stimuli;
+using MongoDB.Driver;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -39,26 +33,21 @@ builder.Services.AddScoped<IFulfilmentRepository, MongoFulfilmentRepository>();
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<CreateFulfilmentHandler>();
 builder.Services.AddScoped<CreateAllocationHandler>();
-builder.Services.AddSingleton<IPreparationCompletionTracker, InMemoryPreparationCompletionTracker>();
+// MongoDB-backed tracker — state survives restarts so in-flight workflows are not abandoned.
+builder.Services.AddSingleton<IPreparationCompletionTracker, MongoPreparationCompletionTracker>();
 
 // ── Elsa (with MongoDB persistence) ──────────────────────────────────────────
+// Registration order: persistence first, then runtime features that depend on it.
 var elsaMongoConnection = builder.Configuration.GetConnectionString("ElsaMongo")!;
 
 builder.Services.AddElsa(elsa =>
 {
+    elsa.UseMongoDb(elsaMongoConnection);     // persistence must be registered first
     elsa.UseWorkflowRuntime();
-    elsa.UseMongoDb(elsaMongoConnection);
-    elsa.UseScheduling(); // Enable scheduling for Delay activities
+    elsa.UseWorkflowManagement();
+    elsa.UseScheduling();
     elsa.AddWorkflow<FulfilmentWorkflow>();
     elsa.AddWorkflow<PreparationWorkflow>();
-    elsa.AddWorkflow<PreparationOutcomeSubWorkflow>();
-    elsa.UseWorkflowManagement();
-});
-
-// Configure application to handle graceful shutdown better
-builder.Services.Configure<HostOptions>(opts => 
-{
-    opts.ShutdownTimeout = TimeSpan.FromSeconds(2); // Shorter timeout to reduce disposal window
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -76,11 +65,11 @@ app.MapPost("/api/fulfilments", async (
     var fulfilmentId = Guid.Parse(request.FulfilmentId);
     var cmd = new CreateFulfilmentCommand(
         FulfilmentId: fulfilmentId,
-        OrderNo: request.OrderId,
-        StoreNo: "STORE-DEFAULT", // Default store for this example
-        CustomerId: request.CustomerId,
-        OrderLines: request.Lines);
-    
+        OrderNo:      request.OrderId,
+        StoreNo:      "STORE-DEFAULT",
+        CustomerId:   request.CustomerId,
+        OrderLines:   request.Lines);
+
     await handler.HandleAsync(cmd, ct);
     return Results.Created($"/api/fulfilments/{fulfilmentId}", new { Id = fulfilmentId });
 });
@@ -102,8 +91,8 @@ app.MapPost("/api/allocations", (
     if (DateTime.UtcNow.Second % 3 == 0)
     {
         return Results.Problem(
-            title: "Allocation Service Temporarily Unavailable",
-            detail: "Service is experiencing temporary issues. Please try again in a few seconds.",
+            title:      "Allocation Service Temporarily Unavailable",
+            detail:     "Service is experiencing temporary issues. Please try again.",
             statusCode: 503);
     }
 
@@ -111,41 +100,15 @@ app.MapPost("/api/allocations", (
     return Results.Ok(result);
 });
 
-app.MapPost("/api/preparation/prepare", async (
-    PrepareCommand cmd,
-    IWorkflowRuntime workflowRuntime,
-    CancellationToken ct) =>
-{
-    var client = await workflowRuntime.CreateClientAsync(cancellationToken: ct);
-
-    var instanceRequest = new CreateWorkflowInstanceRequest
-    {
-        WorkflowDefinitionHandle = WorkflowDefinitionHandle.ByDefinitionId(nameof(PreparationWorkflow)),
-        CorrelationId            = $"preparation-{cmd.Id}",
-        Input = new Dictionary<string, object>
-        {
-            ["PrepareCommandId"] = cmd.Id.ToString(),
-            ["StoreId"]          = cmd.StoreId,
-            ["Lines"]            = JsonSerializer.Serialize(cmd.Lines),
-            ["FulfilmentId"]     = cmd.FulfilmentId
-        }
-    };
-
-    // Create and start the workflow instance - Elsa will handle background execution
-    await client.CreateInstanceAsync(instanceRequest, ct);
-    await client.RunInstanceAsync(RunWorkflowInstanceRequest.Empty, ct);
-
-    return Results.Ok(new { cmd.Id });
-});
-
 app.MapPost("/api/preparation-outcome", async (
-    PreparationOutcomePayload payload, 
-    IWorkflowRuntime workflowRuntime,
+    PreparationOutcomePayload  payload,
     IPreparationCompletionTracker tracker,
-    IStimulusSender stimulusSender) =>
+    IFulfilmentRepository      repository,
+    IStimulusSender            stimulusSender,
+    CancellationToken          ct) =>
 {
     Console.WriteLine();
-    Console.WriteLine($"[/api/preparation-outcome] Received outcome for preparation {payload.Id}  ({payload.Containers.Count} container(s)):");
+    Console.WriteLine($"[/api/preparation-outcome] Received outcome for preparation {payload.Id} ({payload.Containers.Count} container(s)):");
     foreach (var c in payload.Containers)
     {
         Console.WriteLine($"  📦 [{c.ContainerId}] {c.ContainerType}  lines={c.AllocatedLines.Count}");
@@ -155,10 +118,35 @@ app.MapPost("/api/preparation-outcome", async (
 
     try
     {
-        // Mark this preparation as completed and check if all are done
-        var allCompleted = await tracker.MarkCompleted(payload.Id.ToString(), out var workflowInstanceId);
-        
-        if (workflowInstanceId == null)
+        // 1. Update the fulfilment aggregate with the containers from this preparation.
+        const int maxRetries = 5;
+        for (var attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            try
+            {
+                var aggregate = await repository.LoadAsync(payload.FulfilmentId, ct);
+                if (aggregate is null)
+                {
+                    Console.WriteLine($"[/api/preparation-outcome] ⚠️  Aggregate {payload.FulfilmentId} not found — skipping container update");
+                    break;
+                }
+                aggregate.UpdateContainers(payload.Containers, payload.Id);
+                await repository.SaveAsync(aggregate, ct);
+                Console.WriteLine($"[/api/preparation-outcome] ✓ Aggregate {payload.FulfilmentId} updated with {payload.Containers.Count} container(s)");
+                break;
+            }
+            catch (ConcurrencyException) when (attempt < maxRetries)
+            {
+                var delay = TimeSpan.FromMilliseconds(100 * Math.Pow(2, attempt - 1));
+                Console.WriteLine($"[/api/preparation-outcome] ⏳ Concurrency conflict (attempt {attempt}/{maxRetries}), retrying in {delay.TotalMilliseconds}ms...");
+                await Task.Delay(delay, ct);
+            }
+        }
+
+        // 2. Mark preparation completed; signal the FulfilmentWorkflow if all are done.
+        var (allCompleted, workflowInstanceId) = await tracker.MarkCompletedAsync(payload.Id.ToString());
+
+        if (workflowInstanceId is null)
         {
             Console.WriteLine($"[/api/preparation-outcome] ⚠️  No workflow found tracking preparation {payload.Id}");
             return Results.Ok();
@@ -166,30 +154,27 @@ app.MapPost("/api/preparation-outcome", async (
 
         if (allCompleted)
         {
-            Console.WriteLine($"[/api/preparation-outcome] All preparations completed for workflow {workflowInstanceId} - sending completion signal");
-            
-            // Send event signal to resume the workflow
+            Console.WriteLine($"[/api/preparation-outcome] All preparations completed for workflow {workflowInstanceId} — sending signal");
+
             await stimulusSender.SendAsync(
                 "Elsa.Event",
                 new EventStimulus("preparations-all-completed"),
-                new StimulusMetadata { WorkflowInstanceId = workflowInstanceId }
-            );
-            
-            // Clean up tracking data
+                new StimulusMetadata { WorkflowInstanceId = workflowInstanceId },
+                ct);
+
             await tracker.Cleanup(workflowInstanceId);
-            
-            Console.WriteLine($"[/api/preparation-outcome] ✓ FulfilmentWorkflow {workflowInstanceId} signal sent successfully");
+            Console.WriteLine($"[/api/preparation-outcome] ✓ FulfilmentWorkflow {workflowInstanceId} signalled");
         }
         else
         {
-            Console.WriteLine($"[/api/preparation-outcome] Preparation {payload.Id} completed, but workflow {workflowInstanceId} still waiting for more preparations");
+            Console.WriteLine($"[/api/preparation-outcome] Preparation {payload.Id} completed — still waiting for more");
         }
 
         return Results.Ok();
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"[/api/preparation-outcome] ✗ Error processing outcome: {ex.Message}");
+        Console.WriteLine($"[/api/preparation-outcome] ✗ Error: {ex.Message}");
         return Results.Problem($"Failed to process outcome: {ex.Message}");
     }
 });
