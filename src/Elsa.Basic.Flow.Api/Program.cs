@@ -7,9 +7,18 @@ using Elsa.Basic.Flow.Services.Fulfilment;
 using Elsa.Basic.Flow.Services.Preparation;
 using Elsa.Extensions;
 using Elsa.Persistence.MongoDb.Extensions;
+using Elsa.Persistence.MongoDb.Modules.Management;
+using Elsa.Persistence.MongoDb.Modules.Runtime;
+using Elsa.Scheduling;
 using Elsa.Workflows.Runtime;
 using Elsa.Workflows.Runtime.Stimuli;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
+
+// Must be set before any MongoClient is created.
+BsonSerializer.RegisterSerializer(new GuidSerializer(GuidRepresentation.Standard));
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,8 +27,6 @@ var mongoSettings = builder.Configuration.GetSection("MongoDB");
 var mongoClient   = new MongoClient(mongoSettings["ConnectionString"]);
 
 builder.Services.AddSingleton<IMongoClient>(_ => mongoClient);
-builder.Services.AddScoped<IMongoDatabase>(_ =>
-    mongoClient.GetDatabase(mongoSettings["Database"]));
 
 // ── OpenAPI / Swagger ─────────────────────────────────────────────────────────
 builder.Services.AddOpenApi();
@@ -35,6 +42,9 @@ builder.Services.AddScoped<CreateFulfilmentHandler>();
 builder.Services.AddScoped<CreateAllocationHandler>();
 // MongoDB-backed tracker — state survives restarts so in-flight workflows are not abandoned.
 builder.Services.AddSingleton<IPreparationCompletionTracker, MongoPreparationCompletionTracker>();
+// MongoDB-backed scheduler — persists Delay timers so they survive restarts.
+builder.Services.AddSingleton<MongoWorkflowScheduler>();
+builder.Services.AddHostedService<SchedulerPollingService>();
 
 // ── Elsa (with MongoDB persistence) ──────────────────────────────────────────
 // Registration order: persistence first, then runtime features that depend on it.
@@ -42,13 +52,23 @@ var elsaMongoConnection = builder.Configuration.GetConnectionString("ElsaMongo")
 
 builder.Services.AddElsa(elsa =>
 {
-    elsa.UseMongoDb(elsaMongoConnection);     // persistence must be registered first
-    elsa.UseWorkflowRuntime();
-    elsa.UseWorkflowManagement();
-    elsa.UseScheduling();
+    elsa.UseMongoDb(elsaMongoConnection);
+    elsa.UseWorkflowRuntime(r => r.UseMongoDb(_ => { }));
+    elsa.UseWorkflowManagement(m => m.UseMongoDb(_ => { }));
+    elsa.UseScheduling(scheduling =>
+    {
+        // Replace the default in-memory scheduler with the MongoDB-backed one.
+        // This makes Delay timers durable — they survive process restarts.
+        scheduling.WorkflowScheduler = sp => sp.GetRequiredService<MongoWorkflowScheduler>();
+    });
     elsa.AddWorkflow<FulfilmentWorkflow>();
     elsa.AddWorkflow<PreparationWorkflow>();
 });
+
+// Register domain IMongoDatabase after AddElsa so our fms database wins over
+// the fms-workflows database that Elsa.UseMongoDb registers.
+builder.Services.AddScoped<IMongoDatabase>(_ =>
+    mongoClient.GetDatabase(mongoSettings["Database"]));
 
 // ─────────────────────────────────────────────────────────────────────────────
 var app = builder.Build();
@@ -56,6 +76,7 @@ var app = builder.Build();
 app.MapOpenApi();
 app.UseSwaggerUI(c => c.SwaggerEndpoint("/openapi/v1.json", "Elsa Basic Flow API"));
 app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
+
 
 app.MapPost("/api/fulfilments", async (
     CreateFulfilmentRequest request,

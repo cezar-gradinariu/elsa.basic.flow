@@ -4,7 +4,28 @@
       "Bash(rm \"c:/Users/1230075/wxRepos/Elsa.Basic.Flow/src/Elsa.Basic.Flow.Services/Preparation/DelayWithLoggingActivity.cs\")",
       "Bash(rm \"c:/Users/1230075/wxRepos/Elsa.Basic.Flow/src/Elsa.Basic.Flow.Services/Fulfilment/PreparationOutcomeSubWorkflow.cs\")",
       "Bash(rm \"c:/Users/1230075/wxRepos/Elsa.Basic.Flow/src/Elsa.Basic.Flow.Services/Fulfilment/StorePreparationOutcomeActivity.cs\")",
-      "Bash(rm \"c:/Users/1230075/wxRepos/Elsa.Basic.Flow/src/Elsa.Basic.Flow.Services/Fulfilment/UpdateAggregateWithContainersActivity.cs\")"
+      "Bash(rm \"c:/Users/1230075/wxRepos/Elsa.Basic.Flow/src/Elsa.Basic.Flow.Services/Fulfilment/UpdateAggregateWithContainersActivity.cs\")",
+      "Bash(python3 -c \"import sys,json; data=json.load\\(sys.stdin\\); [print\\(d['id'], d['version']\\) for d in data.get\\('data',[]\\)]\")",
+      "Bash(curl -s \"https://api.nuget.org/v3/query?q=Elsa.Quartz&prerelease=false&take=10\")",
+      "Bash(python3 -c \" import sys, json data = json.load\\(sys.stdin\\) for d in data.get\\('data', []\\): print\\(d['id'], d['version']\\) \")",
+      "Bash(python3 -c \" import sys, json data = json.load\\(sys.stdin\\) for d in data.get\\('data', []\\): if 'elsa' in d['id'].lower\\(\\): print\\(d['id'], d['version']\\) \")",
+      "Bash(curl -s \"https://api.nuget.org/v3/registration5-gz-semver2/elsa.quartz/index.json\")",
+      "Bash(python3 -c \" import sys, json, gzip, io raw = sys.stdin.buffer.read\\(\\) try: data = json.loads\\(gzip.decompress\\(raw\\)\\) except: data = json.loads\\(raw\\) items = data.get\\('items', []\\) for page in items[-1:]: for item in page.get\\('items', []\\)[-5:]: cat = item.get\\('catalogEntry', {}\\) print\\(cat.get\\('id'\\), cat.get\\('version'\\)\\) \")",
+      "Bash(python3 -c \" import sys, json, gzip raw = sys.stdin.buffer.read\\(\\) try: data = json.loads\\(gzip.decompress\\(raw\\)\\) except: data = json.loads\\(raw\\) pages = data.get\\('items', []\\) for page in pages[-1:]: for item in page.get\\('items', []\\)[-3:]: cat = item.get\\('catalogEntry', {}\\) if cat.get\\('version',''\\).startswith\\('3.6'\\): print\\('version:', cat.get\\('version'\\)\\) deps = cat.get\\('dependencyGroups', []\\) for g in deps[:1]: for d in g.get\\('dependencies', []\\): if 'quartz' in d.get\\('id',''\\).lower\\(\\) or 'schedule' in d.get\\('id',''\\).lower\\(\\) or 'hangfire' in d.get\\('id',''\\).lower\\(\\): print\\(' dep:', d.get\\('id'\\), d.get\\('range'\\)\\) \")",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -s --max-time 10 \"https://azuresearch-usnc.nuget.org/query?q=elsa.quartz&prerelease=false&take=10\")",
+      "Bash(node -e \"let d=''; process.stdin.on\\('data',c=>d+=c\\); process.stdin.on\\('end',\\(\\)=>{ const j=JSON.parse\\(d\\); j.data.forEach\\(x=>console.log\\(x.id, x.version\\)\\); }\\);\")",
+      "Bash(sort find *)",
+      "Bash(dotnet-csx /tmp/ElsaReflect.cs)",
+      "Bash(mkdir -p /tmp/ReflectElsa)",
+      "Bash(unzip -p elsa.persistence.mongodb.3.6.0.nupkg '*/Features/MongoDbFeature.cs')",
+      "Bash(unzip -l elsa.persistence.mongodb.3.6.0.nupkg)",
+      "Bash(dotnet tool *)",
+      "Bash(dotnet list *)",
+      "Bash(unzip -l elsa.workflows.management.3.6.0.nupkg)",
+      "Bash(dotnet fsi *)",
+      "Bash(dotnet-ilspycmd /c/Users/1230075/.nuget/packages/elsa.workflows.management/3.6.0/lib/net10.0/Elsa.Workflows.Management.dll --list-types)",
+      "Bash(mkdir -p \"C:/Users/1230075/AppData/Local/Temp/ElsaReflect\")"
     ]
   }
 }

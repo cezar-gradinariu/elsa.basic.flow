@@ -12,6 +12,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Elsa.Scheduling" Version="3.6.*" />
+    <PackageReference Include="Elsa.Workflows.Runtime" Version="3.6.*" />
     <PackageReference Include="MongoDB.Driver" Version="3.*" />
   </ItemGroup>
 
