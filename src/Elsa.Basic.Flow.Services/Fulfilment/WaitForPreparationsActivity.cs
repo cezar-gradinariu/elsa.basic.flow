@@ -51,8 +51,8 @@ internal class WaitForPreparationsActivity : Activity
     private async ValueTask OnPreparationCompletedAsync(ActivityExecutionContext context)
     {
         var props     = context.WorkflowExecutionContext.Properties;
-        var total     = Convert.ToInt32(props[TotalKey]);
-        var completed = Convert.ToInt32(props[CompletedKey]) + 1;
+        var total     = props.TryGetValue(TotalKey,     out var t) ? Convert.ToInt32(t) : 0;
+        var completed = props.TryGetValue(CompletedKey, out var c) ? Convert.ToInt32(c) + 1 : 1;
         props[CompletedKey] = completed;
 
         var logger = context.GetRequiredService<ILogger<WaitForPreparationsActivity>>();

@@ -97,10 +97,10 @@ public class MongoFulfilmentRepository(
             (doc.OrderLines ?? []).Select(l => new OrderLine(l.OrderNo, l.Sku, l.Quantity, l.UnitOfMeasure)).ToList(),
             (doc.Containers ?? []).Select(c => new PreparationContainer(
                 c.ContainerId,
-                Enum.Parse<ContainerType>(c.ContainerType),
+                Enum.TryParse<ContainerType>(c.ContainerType, out var ct2) ? ct2 : ContainerType.Tote,
                 (c.AllocatedLines ?? []).Select(l => new AllocatedLine(l.OrderLineNo, l.ArticleId, l.Quantity)).ToList()
             )).ToList(),
-            Enum.Parse<FulfilmentStatus>(doc.Status),
+            Enum.TryParse<FulfilmentStatus>(doc.Status, out var status) ? status : FulfilmentStatus.Created,
             doc.Version);
     }
 
@@ -127,10 +127,10 @@ public class MongoFulfilmentRepository(
             (doc.OrderLines ?? []).Select(l => new OrderLine(l.OrderNo, l.Sku, l.Quantity, l.UnitOfMeasure)).ToList(),
             (doc.Containers ?? []).Select(c => new PreparationContainer(
                 c.ContainerId,
-                Enum.Parse<ContainerType>(c.ContainerType),
+                Enum.TryParse<ContainerType>(c.ContainerType, out var ct2) ? ct2 : ContainerType.Tote,
                 (c.AllocatedLines ?? []).Select(l => new AllocatedLine(l.OrderLineNo, l.ArticleId, l.Quantity)).ToList()
             )).ToList(),
-            Enum.Parse<FulfilmentStatus>(doc.Status),
+            Enum.TryParse<FulfilmentStatus>(doc.Status, out var status) ? status : FulfilmentStatus.Created,
             doc.Version);
     }
 }

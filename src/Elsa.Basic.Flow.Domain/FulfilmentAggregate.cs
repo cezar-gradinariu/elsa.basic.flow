@@ -56,7 +56,7 @@ public class FulfilmentAggregate
         };
     }
 
-    public void UpdateContainers(List<PreparationContainer> containers, Guid prepareCommandId)
+    public void UpdateContainers(List<PreparationContainer> containers)
     {
         Containers.AddRange(containers);
         Version++;

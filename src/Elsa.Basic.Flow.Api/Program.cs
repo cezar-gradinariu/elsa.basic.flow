@@ -142,7 +142,7 @@ app.MapPost("/api/preparation-outcome", async (
                     logger.LogWarning("[/api/preparation-outcome] Aggregate {FulfilmentId} not found — skipping container update", payload.FulfilmentId);
                     break;
                 }
-                aggregate.UpdateContainers(payload.Containers, payload.Id);
+                aggregate.UpdateContainers(payload.Containers);
                 await repository.SaveAsync(aggregate, ct);
                 logger.LogInformation("[/api/preparation-outcome] Aggregate {FulfilmentId} updated with {Count} container(s)", payload.FulfilmentId, payload.Containers.Count);
                 break;

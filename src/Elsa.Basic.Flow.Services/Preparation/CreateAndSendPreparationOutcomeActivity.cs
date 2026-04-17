@@ -17,9 +17,9 @@ internal class CreateAndSendPreparationOutcomeActivity : Activity
 
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        var id               = Guid.TryParse(context.Get(PrepareCommandIdIn), out var parsed) ? parsed : Guid.NewGuid();
+        var id               = Guid.Parse(context.Get(PrepareCommandIdIn) ?? throw new InvalidOperationException("PrepareCommandId is required"));
         var linesJson        = context.Get(LinesJsonIn)    ?? "[]";
-        var fulfilmentId     = Guid.TryParse(context.Get(FulfilmentIdIn), out var pf) ? pf : Guid.Empty;
+        var fulfilmentId     = Guid.Parse(context.Get(FulfilmentIdIn)    ?? throw new InvalidOperationException("FulfilmentId is required"));
         var parentInstanceId = context.Get(ParentWorkflowInstanceIdIn) ?? string.Empty;
         var lines            = JsonSerializer.Deserialize<List<OrderLine>>(linesJson) ?? [];
 
