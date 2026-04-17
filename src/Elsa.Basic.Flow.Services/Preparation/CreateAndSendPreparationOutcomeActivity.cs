@@ -37,8 +37,31 @@ internal class CreateAndSendPreparationOutcomeActivity : Activity
         using var http = factory.CreateClient();
         http.Timeout = TimeSpan.FromSeconds(30);
 
-        var response = await http.PostAsJsonAsync($"{baseUrl}/api/preparation-outcome", payload);
-        Console.WriteLine($"[PreparationWorkflow] POST /api/preparation-outcome → {(int)response.StatusCode} {response.ReasonPhrase}");
+        const int maxAttempts = 4;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                var response = await http.PostAsJsonAsync($"{baseUrl}/api/preparation-outcome", payload, context.CancellationToken);
+                Console.WriteLine($"[PreparationWorkflow] POST /api/preparation-outcome → {(int)response.StatusCode} {response.ReasonPhrase}");
+                if (response.IsSuccessStatusCode) break;
+
+                if (attempt == maxAttempts)
+                    throw new HttpRequestException($"POST /api/preparation-outcome failed after {maxAttempts} attempts: {response.StatusCode}");
+            }
+            catch (HttpRequestException) when (attempt == maxAttempts)
+            {
+                throw;
+            }
+            catch (Exception ex) when (attempt < maxAttempts)
+            {
+                Console.WriteLine($"[PreparationWorkflow] POST failed (attempt {attempt}/{maxAttempts}): {ex.Message}");
+            }
+
+            var delay = TimeSpan.FromSeconds(Math.Pow(2, attempt));
+            Console.WriteLine($"[PreparationWorkflow] Retrying in {delay.TotalSeconds}s...");
+            await Task.Delay(delay, context.CancellationToken);
+        }
 
         await context.CompleteActivityAsync();
     }

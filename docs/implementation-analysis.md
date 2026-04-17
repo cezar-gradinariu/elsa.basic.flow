@@ -61,11 +61,11 @@ The `/api/preparation-outcome` endpoint now sends a single per-preparation stimu
 
 ### 5. No HTTP retry in `CreateAndSendPreparationOutcomeActivity`
 
-**Status: NOT FIXED.** The POST back to `/api/preparation-outcome` has no retry policy. A transient 5xx leaves the fulfilment workflow waiting forever. Recommended fix: inject a `HttpClient` registered with a Polly retry policy via `IHttpClientFactory`. Requires discussing retry strategy (exponential backoff, dead-letter).
+**Status: FIXED.** Added exponential backoff retry (up to 4 attempts: 2s, 4s, 8s). After exhausting retries the activity throws, faulting the preparation workflow — visible in Elsa's `/elsa/api/workflow-instances`. Full dead-letter handling remains open if needed.
 
 ### 6. `SendPrepareCommandsActivity` serializes `OrderLines` to a JSON string
 
-**Status: NOT FIXED.** `Lines` are serialized to a JSON string to pass through the workflow input dictionary. Elsa 3.6 can pass complex types directly via `Input<T>` properties if the workflow is started with typed input. Would require replacing the raw-dict workflow startup with a typed approach — larger refactor, lower urgency.
+**Status: FIXED.** Removed `JsonSerializer.Serialize()` pre-serialization in `CreateFulfilmentHandler` and `SendPrepareCommandsActivity`. Elsa serializes complex types to MongoDB as JSON; when read back they arrive as `JsonElement`, and `.ToString()` on a `JsonElement` array returns the raw JSON — which the receiving activities already pass to `JsonSerializer.Deserialize<T>`. No receiving-side changes needed.
 
 ---
 
@@ -99,8 +99,8 @@ The `/api/preparation-outcome` endpoint now sends a single per-preparation stimu
 | 2 | Custom tracker (removed, per-preparation bookmarks) | Critical | **Fixed** |
 | 3 | Raw input dict extraction in activities | Medium | Partial |
 | 4 | Race condition in WaitForPreparationsActivity | Medium | **Fixed** (via #2) |
-| 5 | No HTTP retry in preparation outcome | Medium | Open |
-| 6 | OrderLines serialized as JSON string | Medium | Open |
+| 5 | No HTTP retry in preparation outcome | Medium | **Fixed** |
+| 6 | OrderLines serialized as JSON string | Medium | **Fixed** |
 | 7 | Console.WriteLine instead of ILogger | Low | Open |
 | 8 | InMemoryPreparationCompletionTracker dead code | Low | **Fixed** (removed) |
 | 9 | No MongoDB indexes | Low | Open |

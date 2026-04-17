@@ -28,10 +28,11 @@ internal class LogPreparationRequestActivity : Activity
 
         var id               = idVal?.ToString()             ?? "(unknown)";
         var storeId          = storeIdVal?.ToString()        ?? "(unknown)";
-        var linesJson        = linesVal?.ToString()          ?? "[]";
         var fulfilmentId     = fulfilmentIdVal?.ToString()   ?? "(unknown)";
         var parentInstanceId = parentInstanceIdVal?.ToString() ?? "(unknown)";
-        var lines            = JsonSerializer.Deserialize<List<OrderLine>>(linesJson) ?? [];
+
+        var linesJson = linesVal?.ToString() ?? "[]";
+        var lines     = JsonSerializer.Deserialize<List<OrderLine>>(linesJson) ?? [];
 
         // Compute per-instance delay here (execution time), not in Build() (registration time).
         var randomSeconds = Random.Shared.Next(5, 31);

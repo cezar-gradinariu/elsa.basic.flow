@@ -25,8 +25,7 @@ internal class AllocateFulfilmentActivity : Activity
 
         var orderNo    = orderNoVal?.ToString()   ?? string.Empty;
         var storeId    = storeIdVal?.ToString()   ?? string.Empty;
-        var orderLines = JsonSerializer.Deserialize<List<OrderLine>>(
-                             orderLinesVal?.ToString() ?? "[]") ?? [];
+        var orderLines = JsonSerializer.Deserialize<List<OrderLine>>(orderLinesVal?.ToString() ?? "[]") ?? [];
 
         var cmd     = new CreateAllocationCommand(orderNo, storeId, orderLines);
         var handler = context.GetRequiredService<CreateAllocationHandler>();
