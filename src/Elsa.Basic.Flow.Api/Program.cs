@@ -43,6 +43,7 @@ builder.Services.AddScoped<IFulfilmentRepository, MongoFulfilmentRepository>();
 builder.Services.AddScoped<CreateFulfilmentHandler>();
 builder.Services.AddScoped<CreateAllocationHandler>();
 // MongoDB-backed scheduler — persists Delay timers so they survive restarts.
+builder.Services.AddSingleton<SchedulerWakeSignal>();
 builder.Services.AddSingleton<MongoWorkflowScheduler>();
 builder.Services.AddHostedService<SchedulerPollingService>();
 

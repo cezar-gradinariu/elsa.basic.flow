@@ -9,8 +9,10 @@ namespace Elsa.Basic.Flow.Infrastructure;
 /// Persists scheduled tasks so they survive process restarts.
 /// On restart, <see cref="SchedulerPollingService"/> picks up any overdue tasks
 /// and dispatches them immediately.
+/// Notifies <see cref="SchedulerWakeSignal"/> after each schedule so the poller
+/// wakes up immediately instead of waiting for its current sleep to expire.
 /// </summary>
-public class MongoWorkflowScheduler(IMongoDatabase db) : IWorkflowScheduler
+public class MongoWorkflowScheduler(IMongoDatabase db, SchedulerWakeSignal wakeSignal) : IWorkflowScheduler
 {
     private IMongoCollection<ScheduledTaskDocument> Col =>
         db.GetCollection<ScheduledTaskDocument>("elsa_scheduled_tasks");
@@ -38,6 +40,7 @@ public class MongoWorkflowScheduler(IMongoDatabase db) : IWorkflowScheduler
             cancellationToken);
 
         Console.WriteLine($"[MongoScheduler] Scheduled '{taskName}' at {at:O}  instance={request.WorkflowInstanceId}");
+        wakeSignal.Notify();
     }
 
     public async ValueTask UnscheduleAsync(string taskName, CancellationToken cancellationToken = default)
