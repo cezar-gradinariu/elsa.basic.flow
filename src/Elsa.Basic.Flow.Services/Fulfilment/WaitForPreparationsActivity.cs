@@ -7,45 +7,58 @@ using Elsa.Workflows.Runtime.Stimuli;
 namespace Elsa.Basic.Flow.Services.Fulfilment;
 
 /// <summary>
-/// Atomically registers the expected preparations with the completion tracker and creates
-/// the Event bookmark that the /api/preparation-outcome endpoint will signal when all are done.
-/// Combining both steps in one ExecuteAsync eliminates the race condition that would exist if
-/// tracker registration and bookmark creation were separate activities.
+/// Creates one bookmark per preparation (event name = "preparation-completed-{id}").
+/// Each bookmark fires independently when its preparation calls back; a counter stored in
+/// WorkflowExecutionContext.Properties (persisted with the workflow instance) tracks how many
+/// have completed. The activity completes itself when the last one fires.
+///
+/// This replaces the external MongoPreparationCompletionTracker — all fan-in state lives
+/// inside Elsa's own workflow instance persistence.
 /// </summary>
 internal class WaitForPreparationsActivity : Activity
 {
-    private const string EventName = "preparations-all-completed";
+    private const string TotalKey     = "_prep_total";
+    private const string CompletedKey = "_prep_completed";
 
     public Input<List<PrepareCommand>>? PrepareCommands { get; set; }
 
-    protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
+    protected override ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        var commands           = context.Get(PrepareCommands)!;
-        var workflowInstanceId = context.WorkflowExecutionContext.Id;
-        var tracker            = context.GetRequiredService<IPreparationCompletionTracker>();
-        var preparationIds     = commands.Select(c => c.Id.ToString()).ToList();
+        var commands = context.Get(PrepareCommands)!;
+        var props    = context.WorkflowExecutionContext.Properties;
 
-        // Register first — then create the bookmark in the same execution step so that
-        // both changes are persisted atomically by Elsa before any preparation can signal back.
-        await tracker.RegisterPreparations(workflowInstanceId, preparationIds);
+        props[TotalKey]     = commands.Count;
+        props[CompletedKey] = 0;
 
-        Console.WriteLine($"[FulfilmentWorkflow] Registered {preparationIds.Count} preparation(s), suspending until all complete...");
+        Console.WriteLine($"[FulfilmentWorkflow] Registered {commands.Count} preparation(s), suspending until all complete...");
 
-        // Create a bookmark that is hash-compatible with Elsa's Event activity so the
-        // existing IStimulusSender call in /api/preparation-outcome resumes this activity.
-        context.CreateBookmark(new CreateBookmarkArgs
+        foreach (var cmd in commands)
         {
-            BookmarkName = RuntimeStimulusNames.Event,
-            Stimulus     = new EventStimulus(EventName),
-            Callback     = OnPreparationsCompletedAsync,
-            AutoBurn     = true
-        });
-        // No CompleteActivityAsync — the activity stays suspended until the bookmark is resumed.
+            context.CreateBookmark(new CreateBookmarkArgs
+            {
+                BookmarkName = RuntimeStimulusNames.Event,
+                Stimulus     = new EventStimulus($"preparation-completed-{cmd.Id}"),
+                Callback     = OnPreparationCompletedAsync,
+                AutoBurn     = true
+            });
+        }
+
+        return ValueTask.CompletedTask;
     }
 
-    private async ValueTask OnPreparationsCompletedAsync(ActivityExecutionContext context)
+    private async ValueTask OnPreparationCompletedAsync(ActivityExecutionContext context)
     {
-        Console.WriteLine("[FulfilmentWorkflow] All preparations completed signal received — continuing workflow.");
-        await context.CompleteActivityAsync();
+        var props     = context.WorkflowExecutionContext.Properties;
+        var total     = Convert.ToInt32(props[TotalKey]);
+        var completed = Convert.ToInt32(props[CompletedKey]) + 1;
+        props[CompletedKey] = completed;
+
+        Console.WriteLine($"[FulfilmentWorkflow] Preparation completed ({completed}/{total})");
+
+        if (completed >= total)
+        {
+            Console.WriteLine("[FulfilmentWorkflow] All preparations completed — continuing workflow.");
+            await context.CompleteActivityAsync();
+        }
     }
 }

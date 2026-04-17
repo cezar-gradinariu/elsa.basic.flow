@@ -42,8 +42,6 @@ builder.Services.AddScoped<IFulfilmentRepository, MongoFulfilmentRepository>();
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<CreateFulfilmentHandler>();
 builder.Services.AddScoped<CreateAllocationHandler>();
-// MongoDB-backed tracker — state survives restarts so in-flight workflows are not abandoned.
-builder.Services.AddSingleton<IPreparationCompletionTracker, MongoPreparationCompletionTracker>();
 // MongoDB-backed scheduler — persists Delay timers so they survive restarts.
 builder.Services.AddSingleton<MongoWorkflowScheduler>();
 builder.Services.AddHostedService<SchedulerPollingService>();
@@ -119,11 +117,10 @@ app.MapPost("/api/allocations", (
 });
 
 app.MapPost("/api/preparation-outcome", async (
-    PreparationOutcomePayload  payload,
-    IPreparationCompletionTracker tracker,
-    IFulfilmentRepository      repository,
-    IStimulusSender            stimulusSender,
-    CancellationToken          ct) =>
+    PreparationOutcomePayload payload,
+    IFulfilmentRepository     repository,
+    IStimulusSender           stimulusSender,
+    CancellationToken         ct) =>
 {
     Console.WriteLine();
     Console.WriteLine($"[/api/preparation-outcome] Received outcome for preparation {payload.Id} ({payload.Containers.Count} container(s)):");
@@ -161,33 +158,17 @@ app.MapPost("/api/preparation-outcome", async (
             }
         }
 
-        // 2. Mark preparation completed; signal the FulfilmentWorkflow if all are done.
-        var (allCompleted, workflowInstanceId) = await tracker.MarkCompletedAsync(payload.Id.ToString());
+        // 2. Signal the FulfilmentWorkflow that this specific preparation is done.
+        //    WaitForPreparationsActivity tracks the count internally via its bookmarks.
+        Console.WriteLine($"[/api/preparation-outcome] Signalling FulfilmentWorkflow {payload.ParentWorkflowInstanceId} — preparation {payload.Id} done");
 
-        if (workflowInstanceId is null)
-        {
-            Console.WriteLine($"[/api/preparation-outcome] ⚠️  No workflow found tracking preparation {payload.Id}");
-            return Results.Ok();
-        }
+        await stimulusSender.SendAsync(
+            "Elsa.Event",
+            new EventStimulus($"preparation-completed-{payload.Id}"),
+            new StimulusMetadata { WorkflowInstanceId = payload.ParentWorkflowInstanceId },
+            ct);
 
-        if (allCompleted)
-        {
-            Console.WriteLine($"[/api/preparation-outcome] All preparations completed for workflow {workflowInstanceId} — sending signal");
-
-            await stimulusSender.SendAsync(
-                "Elsa.Event",
-                new EventStimulus("preparations-all-completed"),
-                new StimulusMetadata { WorkflowInstanceId = workflowInstanceId },
-                ct);
-
-            await tracker.Cleanup(workflowInstanceId);
-            Console.WriteLine($"[/api/preparation-outcome] ✓ FulfilmentWorkflow {workflowInstanceId} signalled");
-        }
-        else
-        {
-            Console.WriteLine($"[/api/preparation-outcome] Preparation {payload.Id} completed — still waiting for more");
-        }
-
+        Console.WriteLine($"[/api/preparation-outcome] ✓ Signal sent");
         return Results.Ok();
     }
     catch (Exception ex)

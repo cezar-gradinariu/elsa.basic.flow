@@ -13,19 +13,17 @@ namespace Elsa.Basic.Flow.Services.Fulfilment;
 internal class SendPrepareCommandsActivity : Activity
 {
     public Input<AllocationResult>?      AllocationResult { get; set; }
+    public Input<string>?                FulfilmentId     { get; set; }
     public Output<List<PrepareCommand>>? PrepareCommands  { get; set; }
 
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        var result = context.Get(AllocationResult)!;
-
-        var input        = context.WorkflowExecutionContext.Input;
-        var fulfilmentId = input?.TryGetValue("FulfilmentId", out var fv) == true
-            ? fv?.ToString() ?? "unknown"
-            : "unknown";
+        var result             = context.Get(AllocationResult)!;
+        var fulfilmentId       = context.Get(FulfilmentId) ?? "unknown";
+        var parentInstanceId   = context.WorkflowExecutionContext.Id;
 
         var commands = result.StoreAllocations
-            .Select(a => new PrepareCommand(Guid.NewGuid(), a.StoreId, a.Lines, fulfilmentId))
+            .Select(a => new PrepareCommand(Guid.NewGuid(), a.StoreId, a.Lines, fulfilmentId, parentInstanceId))
             .ToList();
 
         Console.WriteLine();
@@ -51,10 +49,11 @@ internal class SendPrepareCommandsActivity : Activity
                 CorrelationId            = $"preparation-{cmd.Id}",
                 Input = new Dictionary<string, object>
                 {
-                    ["PrepareCommandId"] = cmd.Id.ToString(),
-                    ["StoreId"]          = cmd.StoreId,
-                    ["Lines"]            = JsonSerializer.Serialize(cmd.Lines),
-                    ["FulfilmentId"]     = cmd.FulfilmentId
+                    ["PrepareCommandId"]        = cmd.Id.ToString(),
+                    ["StoreId"]                 = cmd.StoreId,
+                    ["Lines"]                   = JsonSerializer.Serialize(cmd.Lines),
+                    ["FulfilmentId"]            = cmd.FulfilmentId,
+                    ["ParentWorkflowInstanceId"] = cmd.ParentWorkflowInstanceId
                 }
             }, context.CancellationToken);
 

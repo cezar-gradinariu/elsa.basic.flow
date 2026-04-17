@@ -9,22 +9,24 @@ namespace Elsa.Basic.Flow.Services.Preparation;
 
 internal class CreateAndSendPreparationOutcomeActivity : Activity
 {
-    public Input<string>? PrepareCommandIdIn { get; set; }
-    public Input<string>? LinesJsonIn        { get; set; }
-    public Input<string>? FulfilmentIdIn     { get; set; }
+    public Input<string>? PrepareCommandIdIn      { get; set; }
+    public Input<string>? LinesJsonIn             { get; set; }
+    public Input<string>? FulfilmentIdIn          { get; set; }
+    public Input<string>? ParentWorkflowInstanceIdIn { get; set; }
 
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        var id           = Guid.TryParse(context.Get(PrepareCommandIdIn), out var parsed) ? parsed : Guid.NewGuid();
-        var linesJson    = context.Get(LinesJsonIn)    ?? "[]";
-        var fulfilmentId = Guid.TryParse(context.Get(FulfilmentIdIn), out var pf) ? pf : Guid.Empty;
-        var lines        = JsonSerializer.Deserialize<List<OrderLine>>(linesJson) ?? [];
+        var id               = Guid.TryParse(context.Get(PrepareCommandIdIn), out var parsed) ? parsed : Guid.NewGuid();
+        var linesJson        = context.Get(LinesJsonIn)    ?? "[]";
+        var fulfilmentId     = Guid.TryParse(context.Get(FulfilmentIdIn), out var pf) ? pf : Guid.Empty;
+        var parentInstanceId = context.Get(ParentWorkflowInstanceIdIn) ?? string.Empty;
+        var lines            = JsonSerializer.Deserialize<List<OrderLine>>(linesJson) ?? [];
 
         if (lines.Count == 0)
             Console.WriteLine($"[PreparationWorkflow] ⚠️  No lines for preparation {id}");
 
         var containers = BuildContainers(lines);
-        var payload    = new PreparationOutcomePayload(id, fulfilmentId, containers);
+        var payload    = new PreparationOutcomePayload(id, fulfilmentId, parentInstanceId, containers);
 
         LogPayload(id, containers);
 
