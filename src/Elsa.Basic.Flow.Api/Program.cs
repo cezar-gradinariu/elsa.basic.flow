@@ -118,19 +118,15 @@ app.MapPost("/api/allocations", (
 });
 
 app.MapPost("/api/preparation-outcome", async (
-    PreparationOutcomePayload payload,
-    IFulfilmentRepository     repository,
-    IStimulusSender           stimulusSender,
-    CancellationToken         ct) =>
+    PreparationOutcomePayload  payload,
+    IFulfilmentRepository      repository,
+    IStimulusSender            stimulusSender,
+    ILogger<Program>           logger,
+    CancellationToken          ct) =>
 {
-    Console.WriteLine();
-    Console.WriteLine($"[/api/preparation-outcome] Received outcome for preparation {payload.Id} ({payload.Containers.Count} container(s)):");
+    logger.LogInformation("[/api/preparation-outcome] Received outcome for preparation {Id} ({Count} container(s))", payload.Id, payload.Containers.Count);
     foreach (var c in payload.Containers)
-    {
-        Console.WriteLine($"  📦 [{c.ContainerId}] {c.ContainerType}  lines={c.AllocatedLines.Count}");
-        foreach (var l in c.AllocatedLines)
-            Console.WriteLine($"      {l.OrderLineNo,-20} articleId:{l.ArticleId,-20} qty:{l.Quantity,3}");
-    }
+        logger.LogInformation("  📦 [{ContainerId}] {ContainerType}  lines={Lines}", c.ContainerId, c.ContainerType, c.AllocatedLines.Count);
 
     try
     {
@@ -143,25 +139,25 @@ app.MapPost("/api/preparation-outcome", async (
                 var aggregate = await repository.LoadAsync(payload.FulfilmentId, ct);
                 if (aggregate is null)
                 {
-                    Console.WriteLine($"[/api/preparation-outcome] ⚠️  Aggregate {payload.FulfilmentId} not found — skipping container update");
+                    logger.LogWarning("[/api/preparation-outcome] Aggregate {FulfilmentId} not found — skipping container update", payload.FulfilmentId);
                     break;
                 }
                 aggregate.UpdateContainers(payload.Containers, payload.Id);
                 await repository.SaveAsync(aggregate, ct);
-                Console.WriteLine($"[/api/preparation-outcome] ✓ Aggregate {payload.FulfilmentId} updated with {payload.Containers.Count} container(s)");
+                logger.LogInformation("[/api/preparation-outcome] Aggregate {FulfilmentId} updated with {Count} container(s)", payload.FulfilmentId, payload.Containers.Count);
                 break;
             }
             catch (ConcurrencyException) when (attempt < maxRetries)
             {
                 var delay = TimeSpan.FromMilliseconds(100 * Math.Pow(2, attempt - 1));
-                Console.WriteLine($"[/api/preparation-outcome] ⏳ Concurrency conflict (attempt {attempt}/{maxRetries}), retrying in {delay.TotalMilliseconds}ms...");
+                logger.LogWarning("[/api/preparation-outcome] Concurrency conflict (attempt {Attempt}/{Max}), retrying in {Delay}ms", attempt, maxRetries, delay.TotalMilliseconds);
                 await Task.Delay(delay, ct);
             }
         }
 
         // 2. Signal the FulfilmentWorkflow that this specific preparation is done.
         //    WaitForPreparationsActivity tracks the count internally via its bookmarks.
-        Console.WriteLine($"[/api/preparation-outcome] Signalling FulfilmentWorkflow {payload.ParentWorkflowInstanceId} — preparation {payload.Id} done");
+        logger.LogInformation("[/api/preparation-outcome] Signalling FulfilmentWorkflow {InstanceId} — preparation {Id} done", payload.ParentWorkflowInstanceId, payload.Id);
 
         await stimulusSender.SendAsync(
             "Elsa.Event",
@@ -169,14 +165,20 @@ app.MapPost("/api/preparation-outcome", async (
             new StimulusMetadata { WorkflowInstanceId = payload.ParentWorkflowInstanceId },
             ct);
 
-        Console.WriteLine($"[/api/preparation-outcome] ✓ Signal sent");
+        logger.LogInformation("[/api/preparation-outcome] Signal sent");
         return Results.Ok();
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"[/api/preparation-outcome] ✗ Error: {ex.Message}");
+        logger.LogError(ex, "[/api/preparation-outcome] Error processing outcome for preparation {Id}", payload.Id);
         return Results.Problem($"Failed to process outcome: {ex.Message}");
     }
 });
+
+// Ensure index on elsa_scheduled_tasks.ResumeAt for the polling query.
+var elsaDb = app.Services.GetRequiredService<IMongoDatabase>();
+await elsaDb.GetCollection<BsonDocument>("elsa_scheduled_tasks")
+    .Indexes.CreateOneAsync(
+        new CreateIndexModel<BsonDocument>(Builders<BsonDocument>.IndexKeys.Ascending("ResumeAt")));
 
 app.Run();

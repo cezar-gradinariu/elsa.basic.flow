@@ -8,6 +8,9 @@ public class CreateAllocationHandler
 
     public AllocationResult Handle(CreateAllocationCommand cmd)
     {
+        if (cmd.OrderLines.Count == 0)
+            throw new ArgumentException("Cannot allocate an order with no order lines.", nameof(cmd));
+
         var storeCount = cmd.OrderLines.Count switch
         {
             1      => 1,

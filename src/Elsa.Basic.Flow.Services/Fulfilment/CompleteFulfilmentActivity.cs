@@ -1,5 +1,6 @@
 using Elsa.Workflows;
 using Elsa.Workflows.Models;
+using Microsoft.Extensions.Logging;
 
 namespace Elsa.Basic.Flow.Services.Fulfilment;
 
@@ -11,10 +12,8 @@ internal class CompleteFulfilmentActivity : Activity
     {
         var fulfilmentId = context.Get(FulfilmentId) ?? "unknown";
 
-        // Reaching this activity means the WaitForPreparationsActivity bookmark was
-        // triggered, which only happens after all preparations have signalled completion.
-        Console.WriteLine($"[FulfilmentWorkflow] Fulfilment {fulfilmentId} completed successfully.");
-        Console.WriteLine($"[FulfilmentWorkflow] All preparation workflows have finished and returned their outcomes.");
+        var logger = context.GetRequiredService<ILogger<CompleteFulfilmentActivity>>();
+        logger.LogInformation("[FulfilmentWorkflow] Fulfilment {FulfilmentId} completed — all preparation workflows finished", fulfilmentId);
 
         await context.CompleteActivityAsync();
     }

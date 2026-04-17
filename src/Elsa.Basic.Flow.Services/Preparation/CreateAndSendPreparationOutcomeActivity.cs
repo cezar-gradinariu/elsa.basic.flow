@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using Elsa.Basic.Flow.Domain;
+using Microsoft.Extensions.Logging;
 using Elsa.Workflows;
 using Elsa.Workflows.Models;
 using Microsoft.Extensions.Configuration;
@@ -22,13 +23,15 @@ internal class CreateAndSendPreparationOutcomeActivity : Activity
         var parentInstanceId = context.Get(ParentWorkflowInstanceIdIn) ?? string.Empty;
         var lines            = JsonSerializer.Deserialize<List<OrderLine>>(linesJson) ?? [];
 
+        var logger = context.GetRequiredService<ILogger<CreateAndSendPreparationOutcomeActivity>>();
+
         if (lines.Count == 0)
-            Console.WriteLine($"[PreparationWorkflow] ⚠️  No lines for preparation {id}");
+            logger.LogWarning("[PreparationWorkflow] No lines for preparation {Id}", id);
 
         var containers = BuildContainers(lines);
         var payload    = new PreparationOutcomePayload(id, fulfilmentId, parentInstanceId, containers);
 
-        LogPayload(id, containers);
+        LogPayload(logger, id, containers);
 
         var config   = context.GetRequiredService<IConfiguration>();
         var factory  = context.GetRequiredService<IHttpClientFactory>();
@@ -43,7 +46,7 @@ internal class CreateAndSendPreparationOutcomeActivity : Activity
             try
             {
                 var response = await http.PostAsJsonAsync($"{baseUrl}/api/preparation-outcome", payload, context.CancellationToken);
-                Console.WriteLine($"[PreparationWorkflow] POST /api/preparation-outcome → {(int)response.StatusCode} {response.ReasonPhrase}");
+                logger.LogInformation("[PreparationWorkflow] POST /api/preparation-outcome → {Status}", (int)response.StatusCode);
                 if (response.IsSuccessStatusCode) break;
 
                 if (attempt == maxAttempts)
@@ -55,11 +58,11 @@ internal class CreateAndSendPreparationOutcomeActivity : Activity
             }
             catch (Exception ex) when (attempt < maxAttempts)
             {
-                Console.WriteLine($"[PreparationWorkflow] POST failed (attempt {attempt}/{maxAttempts}): {ex.Message}");
+                logger.LogWarning("[PreparationWorkflow] POST failed (attempt {Attempt}/{Max}): {Message}", attempt, maxAttempts, ex.Message);
             }
 
             var delay = TimeSpan.FromSeconds(Math.Pow(2, attempt));
-            Console.WriteLine($"[PreparationWorkflow] Retrying in {delay.TotalSeconds}s...");
+            logger.LogInformation("[PreparationWorkflow] Retrying in {Delay}s", delay.TotalSeconds);
             await Task.Delay(delay, context.CancellationToken);
         }
 
@@ -90,14 +93,10 @@ internal class CreateAndSendPreparationOutcomeActivity : Activity
             .ToList();
     }
 
-    private static void LogPayload(Guid id, List<PreparationContainer> containers)
+    private static void LogPayload(ILogger<CreateAndSendPreparationOutcomeActivity> logger, Guid id, List<PreparationContainer> containers)
     {
-        Console.WriteLine($"[PreparationWorkflow] Outcome for {id} ({containers.Count} container(s)):");
+        logger.LogInformation("[PreparationWorkflow] Outcome for {Id} ({Count} container(s))", id, containers.Count);
         foreach (var c in containers)
-        {
-            Console.WriteLine($"  📦 {c.ContainerId} ({c.ContainerType})  lines={c.AllocatedLines.Count}");
-            foreach (var l in c.AllocatedLines)
-                Console.WriteLine($"    {l.OrderLineNo,-15} qty:{l.Quantity,3}");
-        }
+            logger.LogInformation("  📦 {ContainerId} ({ContainerType})  lines={Lines}", c.ContainerId, c.ContainerType, c.AllocatedLines.Count);
     }
 }

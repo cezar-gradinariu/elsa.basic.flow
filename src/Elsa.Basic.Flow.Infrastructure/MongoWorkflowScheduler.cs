@@ -1,4 +1,5 @@
 using Elsa.Scheduling;
+using Microsoft.Extensions.Logging;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
 
@@ -12,7 +13,7 @@ namespace Elsa.Basic.Flow.Infrastructure;
 /// Notifies <see cref="SchedulerWakeSignal"/> after each schedule so the poller
 /// wakes up immediately instead of waiting for its current sleep to expire.
 /// </summary>
-public class MongoWorkflowScheduler(IMongoDatabase db, SchedulerWakeSignal wakeSignal) : IWorkflowScheduler
+public class MongoWorkflowScheduler(IMongoDatabase db, SchedulerWakeSignal wakeSignal, ILogger<MongoWorkflowScheduler> logger) : IWorkflowScheduler
 {
     private IMongoCollection<ScheduledTaskDocument> Col =>
         db.GetCollection<ScheduledTaskDocument>("elsa_scheduled_tasks");
@@ -39,7 +40,7 @@ public class MongoWorkflowScheduler(IMongoDatabase db, SchedulerWakeSignal wakeS
             new ReplaceOptions { IsUpsert = true },
             cancellationToken);
 
-        Console.WriteLine($"[MongoScheduler] Scheduled '{taskName}' at {at:O}  instance={request.WorkflowInstanceId}");
+        logger.LogInformation("[MongoScheduler] Scheduled '{TaskName}' at {At}  instance={InstanceId}", taskName, at, request.WorkflowInstanceId);
         wakeSignal.Notify();
     }
 

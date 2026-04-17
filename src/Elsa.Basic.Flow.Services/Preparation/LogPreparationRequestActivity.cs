@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Elsa.Basic.Flow.Domain;
+using Microsoft.Extensions.Logging;
 using Elsa.Workflows;
 using Elsa.Workflows.Models;
 
@@ -44,13 +45,12 @@ internal class LogPreparationRequestActivity : Activity
         context.Set(ParentWorkflowInstanceIdOut, parentInstanceId);
         context.Set(DelayOut,                    delay);
 
-        Console.WriteLine();
-        Console.WriteLine($"[PreparationWorkflow] id={id}  store={storeId}  lines={lines.Count}  delay={randomSeconds}s  fulfilmentId={fulfilmentId}");
-        foreach (var line in lines)
-            Console.WriteLine($"  {line.Sku,-20} qty:{line.Quantity,3}  {line.UnitOfMeasure}");
+        var logger = context.GetRequiredService<ILogger<LogPreparationRequestActivity>>();
+        logger.LogInformation("[PreparationWorkflow] id={Id}  store={StoreId}  lines={LineCount}  delay={Delay}s  fulfilmentId={FulfilmentId}",
+            id, storeId, lines.Count, randomSeconds, fulfilmentId);
 
         if (lines.Count == 0)
-            Console.WriteLine("  ⚠️  No order lines — will produce 0 containers");
+            logger.LogWarning("[PreparationWorkflow] No order lines for preparation {Id} — will produce 0 containers", id);
 
         await context.CompleteActivityAsync();
     }

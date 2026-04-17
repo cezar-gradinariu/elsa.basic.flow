@@ -58,15 +58,7 @@ public class FulfilmentAggregate
 
     public void UpdateContainers(List<PreparationContainer> containers, Guid prepareCommandId)
     {
-        Console.WriteLine($"[FulfilmentAggregate] UpdateContainers: Adding {containers.Count} containers from preparation {prepareCommandId}");
-        
         Containers.AddRange(containers);
         Version++;
-        
-        Console.WriteLine($"[FulfilmentAggregate] Total containers: {Containers.Count}, Version: {Version}");
-        foreach (var container in containers)
-        {
-            Console.WriteLine($"  📦 Added {container.ContainerId} ({container.ContainerType}) with {container.AllocatedLines.Count} lines");
-        }
     }
 }

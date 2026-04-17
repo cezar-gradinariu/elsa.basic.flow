@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Elsa.Basic.Flow.Services.Allocation;
+using Microsoft.Extensions.Logging;
 using Elsa.Basic.Flow.Services.Preparation;
 using Elsa.Workflows;
 using Elsa.Workflows.Models;
@@ -21,19 +22,15 @@ internal class SendPrepareCommandsActivity : Activity
         var result             = context.Get(AllocationResult)!;
         var fulfilmentId       = context.Get(FulfilmentId) ?? "unknown";
         var parentInstanceId   = context.WorkflowExecutionContext.Id;
+        var logger             = context.GetRequiredService<ILogger<SendPrepareCommandsActivity>>();
 
         var commands = result.StoreAllocations
             .Select(a => new PrepareCommand(Guid.NewGuid(), a.StoreId, a.Lines, fulfilmentId, parentInstanceId))
             .ToList();
 
-        Console.WriteLine();
-        Console.WriteLine($"[FulfilmentWorkflow] Dispatching {commands.Count} preparation(s) for order {result.OrderNo}:");
+        logger.LogInformation("[FulfilmentWorkflow] Dispatching {Count} preparation(s) for order {OrderNo}", commands.Count, result.OrderNo);
         foreach (var cmd in commands)
-        {
-            Console.WriteLine($"  → PrepareCommand id={cmd.Id}  storeId={cmd.StoreId}  lines={cmd.Lines.Count}");
-            foreach (var line in cmd.Lines)
-                Console.WriteLine($"      {line.Sku,-20} qty:{line.Quantity,3}  {line.UnitOfMeasure}");
-        }
+            logger.LogInformation("  → PrepareCommand id={Id}  storeId={StoreId}  lines={Lines}", cmd.Id, cmd.StoreId, cmd.Lines.Count);
 
         context.Set(PrepareCommands, commands);
 
@@ -61,7 +58,7 @@ internal class SendPrepareCommandsActivity : Activity
                 new DispatchWorkflowInstanceRequest { InstanceId = client.WorkflowInstanceId },
                 context.CancellationToken);
 
-            Console.WriteLine($"  ✓ PrepareCommand id={cmd.Id} dispatched as workflow {client.WorkflowInstanceId}");
+            logger.LogInformation("  ✓ PrepareCommand id={Id} dispatched as workflow {WorkflowInstanceId}", cmd.Id, client.WorkflowInstanceId);
         }
 
         await context.CompleteActivityAsync();

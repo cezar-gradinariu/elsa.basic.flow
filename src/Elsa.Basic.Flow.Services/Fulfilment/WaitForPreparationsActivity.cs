@@ -1,5 +1,6 @@
 using Elsa.Basic.Flow.Services.Preparation;
 using Elsa.Workflows;
+using Microsoft.Extensions.Logging;
 using Elsa.Workflows.Models;
 using Elsa.Workflows.Runtime;
 using Elsa.Workflows.Runtime.Stimuli;
@@ -30,7 +31,8 @@ internal class WaitForPreparationsActivity : Activity
         props[TotalKey]     = commands.Count;
         props[CompletedKey] = 0;
 
-        Console.WriteLine($"[FulfilmentWorkflow] Registered {commands.Count} preparation(s), suspending until all complete...");
+        context.GetRequiredService<ILogger<WaitForPreparationsActivity>>()
+            .LogInformation("[FulfilmentWorkflow] Registered {Count} preparation(s), suspending until all complete", commands.Count);
 
         foreach (var cmd in commands)
         {
@@ -53,11 +55,12 @@ internal class WaitForPreparationsActivity : Activity
         var completed = Convert.ToInt32(props[CompletedKey]) + 1;
         props[CompletedKey] = completed;
 
-        Console.WriteLine($"[FulfilmentWorkflow] Preparation completed ({completed}/{total})");
+        var logger = context.GetRequiredService<ILogger<WaitForPreparationsActivity>>();
+        logger.LogInformation("[FulfilmentWorkflow] Preparation completed ({Completed}/{Total})", completed, total);
 
         if (completed >= total)
         {
-            Console.WriteLine("[FulfilmentWorkflow] All preparations completed — continuing workflow.");
+            logger.LogInformation("[FulfilmentWorkflow] All preparations completed — continuing workflow");
             await context.CompleteActivityAsync();
         }
     }

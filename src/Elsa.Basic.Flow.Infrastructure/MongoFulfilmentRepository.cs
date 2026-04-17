@@ -1,10 +1,13 @@
 using Elsa.Basic.Flow.Domain;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 
 namespace Elsa.Basic.Flow.Infrastructure;
 
-public class MongoFulfilmentRepository([FromKeyedServices("domain")] IMongoDatabase db) : IFulfilmentRepository
+public class MongoFulfilmentRepository(
+    [FromKeyedServices("domain")] IMongoDatabase db,
+    ILogger<MongoFulfilmentRepository> logger) : IFulfilmentRepository
 {
     private IMongoCollection<FulfilmentDocument> Col =>
         db.GetCollection<FulfilmentDocument>("fulfilments");
@@ -18,7 +21,7 @@ public class MongoFulfilmentRepository([FromKeyedServices("domain")] IMongoDatab
             StoreNo    = aggregate.StoreNo,
             CustomerId = aggregate.CustomerId,
             Status     = aggregate.Status.ToString(),
-            Version    = aggregate.Version, // ← Remove the +1 since UpdateContainers already incremented it
+            Version    = aggregate.Version,
             OrderLines = (aggregate.OrderLines ?? [])
                 .Select(l => new FulfilmentLineDocument
                 {
@@ -47,39 +50,34 @@ public class MongoFulfilmentRepository([FromKeyedServices("domain")] IMongoDatab
 
         if (aggregate.Version == 0)
         {
-            // New aggregate — insert. A duplicate key means another writer already
-            // persisted this fulfilment, which is a concurrency conflict.
             try
             {
-                Console.WriteLine($"[MongoRepository] Inserting new aggregate {aggregate.FulfilmentId} (Version: {aggregate.Version})");
+                logger.LogDebug("Inserting aggregate {Id}", aggregate.FulfilmentId);
                 await Col.InsertOneAsync(doc, cancellationToken: ct);
-                Console.WriteLine($"[MongoRepository] ✓ Inserted aggregate {aggregate.FulfilmentId} (Version: {aggregate.Version})");
+                logger.LogInformation("Inserted aggregate {Id} v{Version}", aggregate.FulfilmentId, aggregate.Version);
             }
             catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
             {
-                Console.WriteLine($"[MongoRepository] ✗ Duplicate key conflict for {aggregate.FulfilmentId}");
+                logger.LogWarning("Duplicate key conflict for aggregate {Id}", aggregate.FulfilmentId);
                 throw new ConcurrencyException(aggregate.FulfilmentId, aggregate.Version);
             }
         }
         else
         {
-            // Existing aggregate — replace only if the version in the DB still matches.
-            // No upsert: if the filter misses, the version was already advanced by a
-            // concurrent writer and we must not silently overwrite their changes.
             var filter = Builders<FulfilmentDocument>.Filter.And(
                 Builders<FulfilmentDocument>.Filter.Eq(x => x.Id,      doc.Id),
-                Builders<FulfilmentDocument>.Filter.Eq(x => x.Version, aggregate.Version - 1)); // Look for the old version
+                Builders<FulfilmentDocument>.Filter.Eq(x => x.Version, aggregate.Version - 1));
 
-            Console.WriteLine($"[MongoRepository] Updating aggregate {aggregate.FulfilmentId}: {aggregate.Version - 1} → {aggregate.Version}");
+            logger.LogDebug("Updating aggregate {Id}: v{Old} → v{New}", aggregate.FulfilmentId, aggregate.Version - 1, aggregate.Version);
             var result = await Col.ReplaceOneAsync(filter, doc, cancellationToken: ct);
 
             if (result.MatchedCount == 0)
             {
-                Console.WriteLine($"[MongoRepository] ✗ Concurrency conflict: expected version {aggregate.Version - 1} was already superseded");
+                logger.LogWarning("Concurrency conflict on aggregate {Id}: expected v{Version} was already superseded", aggregate.FulfilmentId, aggregate.Version - 1);
                 throw new ConcurrencyException(aggregate.FulfilmentId, aggregate.Version - 1);
             }
-            
-            Console.WriteLine($"[MongoRepository] ✓ Updated aggregate {aggregate.FulfilmentId} to version {aggregate.Version}");
+
+            logger.LogInformation("Updated aggregate {Id} to v{Version}", aggregate.FulfilmentId, aggregate.Version);
         }
     }
 
@@ -108,18 +106,18 @@ public class MongoFulfilmentRepository([FromKeyedServices("domain")] IMongoDatab
 
     public async Task<FulfilmentAggregate?> LoadAsync(Guid id, CancellationToken ct = default)
     {
-        Console.WriteLine($"[MongoRepository] Loading aggregate {id}...");
+        logger.LogDebug("Loading aggregate {Id}", id);
         var doc = await Col
             .Find(x => x.Id == id)
             .FirstOrDefaultAsync(ct);
 
-        if (doc is null) 
+        if (doc is null)
         {
-            Console.WriteLine($"[MongoRepository] ✗ Aggregate {id} not found");
+            logger.LogWarning("Aggregate {Id} not found", id);
             return null;
         }
 
-        Console.WriteLine($"[MongoRepository] ✓ Loaded aggregate {id} (Version: {doc.Version})");
+        logger.LogDebug("Loaded aggregate {Id} v{Version}", id, doc.Version);
 
         return FulfilmentAggregate.Reconstitute(
             doc.Id,
