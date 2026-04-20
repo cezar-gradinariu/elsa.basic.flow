@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Elsa.Basic.Flow.Api;
 using Elsa.Basic.Flow.Domain;
 using Elsa.Basic.Flow.Infrastructure;
@@ -118,11 +119,10 @@ app.MapPost("/api/allocations", (
 });
 
 app.MapPost("/api/preparation-outcome", async (
-    PreparationOutcomePayload  payload,
-    IFulfilmentRepository      repository,
-    IStimulusSender            stimulusSender,
-    ILogger<Program>           logger,
-    CancellationToken          ct) =>
+    PreparationOutcomePayload payload,
+    IStimulusSender           stimulusSender,
+    ILogger<Program>          logger,
+    CancellationToken         ct) =>
 {
     logger.LogInformation("[/api/preparation-outcome] Received outcome for preparation {Id} ({Count} container(s))", payload.Id, payload.Containers.Count);
     foreach (var c in payload.Containers)
@@ -130,42 +130,22 @@ app.MapPost("/api/preparation-outcome", async (
 
     try
     {
-        // 1. Update the fulfilment aggregate with the containers from this preparation.
-        const int maxRetries = 5;
-        for (var attempt = 1; attempt <= maxRetries; attempt++)
-        {
-            try
-            {
-                var aggregate = await repository.LoadAsync(payload.FulfilmentId, ct);
-                if (aggregate is null)
-                {
-                    logger.LogWarning("[/api/preparation-outcome] Aggregate {FulfilmentId} not found — skipping container update", payload.FulfilmentId);
-                    break;
-                }
-                aggregate.UpdateContainers(payload.Containers);
-                await repository.SaveAsync(aggregate, ct);
-                logger.LogInformation("[/api/preparation-outcome] Aggregate {FulfilmentId} updated with {Count} container(s)", payload.FulfilmentId, payload.Containers.Count);
-                break;
-            }
-            catch (ConcurrencyException) when (attempt < maxRetries)
-            {
-                var delay = TimeSpan.FromMilliseconds(100 * Math.Pow(2, attempt - 1));
-                logger.LogWarning("[/api/preparation-outcome] Concurrency conflict (attempt {Attempt}/{Max}), retrying in {Delay}ms", attempt, maxRetries, delay.TotalMilliseconds);
-                await Task.Delay(delay, ct);
-            }
-        }
-
-        // 2. Signal the FulfilmentWorkflow that this specific preparation is done.
-        //    WaitForPreparationsActivity tracks the count internally via its bookmarks.
-        logger.LogInformation("[/api/preparation-outcome] Signalling FulfilmentWorkflow {InstanceId} — preparation {Id} done", payload.ParentWorkflowInstanceId, payload.Id);
-
+        // Signal the FulfilmentWorkflow. Elsa routes to the workflow holding the bookmark
+        // for this preparation — no need to target by instance ID.
+        // Containers travel as stimulus input so WaitForPreparationsActivity can update the aggregate.
         await stimulusSender.SendAsync(
             "Elsa.Event",
             new EventStimulus($"preparation-completed-{payload.Id}"),
-            new StimulusMetadata { WorkflowInstanceId = payload.ParentWorkflowInstanceId },
+            new StimulusMetadata
+            {
+                Input = new Dictionary<string, object>
+                {
+                    ["Containers"] = JsonSerializer.Serialize(payload.Containers)
+                }
+            },
             ct);
 
-        logger.LogInformation("[/api/preparation-outcome] Signal sent");
+        logger.LogInformation("[/api/preparation-outcome] Signal sent for preparation {Id}", payload.Id);
         return Results.Ok();
     }
     catch (Exception ex)

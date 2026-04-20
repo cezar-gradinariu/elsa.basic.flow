@@ -10,18 +10,14 @@ namespace Elsa.Basic.Flow.Services.Preparation;
 
 internal class CreateAndSendPreparationOutcomeActivity : Activity
 {
-    public Input<string>? PrepareCommandIdIn      { get; set; }
-    public Input<string>? LinesJsonIn             { get; set; }
-    public Input<string>? FulfilmentIdIn          { get; set; }
-    public Input<string>? ParentWorkflowInstanceIdIn { get; set; }
+    public Input<string>? PrepareCommandIdIn { get; set; }
+    public Input<string>? LinesJsonIn        { get; set; }
 
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        var id               = Guid.Parse(context.Get(PrepareCommandIdIn) ?? throw new InvalidOperationException("PrepareCommandId is required"));
-        var linesJson        = context.Get(LinesJsonIn)    ?? "[]";
-        var fulfilmentId     = Guid.Parse(context.Get(FulfilmentIdIn)    ?? throw new InvalidOperationException("FulfilmentId is required"));
-        var parentInstanceId = context.Get(ParentWorkflowInstanceIdIn) ?? string.Empty;
-        var lines            = JsonSerializer.Deserialize<List<OrderLine>>(linesJson) ?? [];
+        var id        = Guid.Parse(context.Get(PrepareCommandIdIn) ?? throw new InvalidOperationException("PrepareCommandId is required"));
+        var linesJson = context.Get(LinesJsonIn) ?? "[]";
+        var lines     = JsonSerializer.Deserialize<List<OrderLine>>(linesJson) ?? [];
 
         var logger = context.GetRequiredService<ILogger<CreateAndSendPreparationOutcomeActivity>>();
 
@@ -29,13 +25,13 @@ internal class CreateAndSendPreparationOutcomeActivity : Activity
             logger.LogWarning("[PreparationWorkflow] No lines for preparation {Id}", id);
 
         var containers = BuildContainers(lines);
-        var payload    = new PreparationOutcomePayload(id, fulfilmentId, parentInstanceId, containers);
+        var payload    = new PreparationOutcomePayload(id, containers);
 
         LogPayload(logger, id, containers);
 
-        var config   = context.GetRequiredService<IConfiguration>();
-        var factory  = context.GetRequiredService<IHttpClientFactory>();
-        var baseUrl  = config["Api:BaseUrl"] ?? "http://localhost:5000";
+        var config  = context.GetRequiredService<IConfiguration>();
+        var factory = context.GetRequiredService<IHttpClientFactory>();
+        var baseUrl = config["Api:BaseUrl"] ?? "http://localhost:5000";
 
         using var http = factory.CreateClient();
         http.Timeout = TimeSpan.FromSeconds(30);

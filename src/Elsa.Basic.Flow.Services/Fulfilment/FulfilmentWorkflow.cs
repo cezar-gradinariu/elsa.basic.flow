@@ -26,14 +26,12 @@ public class FulfilmentWorkflow : WorkflowBase
                 new SendPrepareCommandsActivity
                 {
                     AllocationResult = new Input<AllocationResult>(allocationResult),
-                    FulfilmentId     = new Input<string>(fulfilmentId),
                     PrepareCommands  = new Output<List<PrepareCommand>>(prepareCommands)
                 },
-                // Registers the tracker and creates the Event bookmark atomically,
-                // then suspends until all preparations signal completion.
                 new WaitForPreparationsActivity
                 {
-                    PrepareCommands = new Input<List<PrepareCommand>>(prepareCommands)
+                    PrepareCommands = new Input<List<PrepareCommand>>(prepareCommands),
+                    FulfilmentId    = new Input<string>(fulfilmentId)
                 },
                 new CompleteFulfilmentActivity
                 {

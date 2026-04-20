@@ -14,18 +14,15 @@ namespace Elsa.Basic.Flow.Services.Fulfilment;
 internal class SendPrepareCommandsActivity : Activity
 {
     public Input<AllocationResult>?      AllocationResult { get; set; }
-    public Input<string>?                FulfilmentId     { get; set; }
     public Output<List<PrepareCommand>>? PrepareCommands  { get; set; }
 
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        var result             = context.Get(AllocationResult)!;
-        var fulfilmentId       = context.Get(FulfilmentId) ?? "unknown";
-        var parentInstanceId   = context.WorkflowExecutionContext.Id;
-        var logger             = context.GetRequiredService<ILogger<SendPrepareCommandsActivity>>();
+        var result  = context.Get(AllocationResult)!;
+        var logger  = context.GetRequiredService<ILogger<SendPrepareCommandsActivity>>();
 
         var commands = result.StoreAllocations
-            .Select(a => new PrepareCommand(Guid.NewGuid(), a.StoreId, a.Lines, fulfilmentId, parentInstanceId))
+            .Select(a => new PrepareCommand(Guid.NewGuid(), a.StoreId, a.Lines))
             .ToList();
 
         logger.LogInformation("[FulfilmentWorkflow] Dispatching {Count} preparation(s) for order {OrderNo}", commands.Count, result.OrderNo);
@@ -46,11 +43,9 @@ internal class SendPrepareCommandsActivity : Activity
                 CorrelationId            = $"preparation-{cmd.Id}",
                 Input = new Dictionary<string, object>
                 {
-                    ["PrepareCommandId"]        = cmd.Id.ToString(),
-                    ["StoreId"]                 = cmd.StoreId,
-                    ["Lines"]                   = JsonSerializer.Serialize(cmd.Lines),
-                    ["FulfilmentId"]            = cmd.FulfilmentId,
-                    ["ParentWorkflowInstanceId"] = cmd.ParentWorkflowInstanceId
+                    ["PrepareCommandId"] = cmd.Id.ToString(),
+                    ["StoreId"]          = cmd.StoreId,
+                    ["Lines"]            = JsonSerializer.Serialize(cmd.Lines)
                 }
             }, context.CancellationToken);
 
