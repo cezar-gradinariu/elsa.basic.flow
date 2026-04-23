@@ -1,29 +1,20 @@
-using System.Text.Json;
 using Elsa.Basic.Flow.Api;
 using Elsa.Basic.Flow.Domain;
 using Elsa.Basic.Flow.Infrastructure;
-using Elsa.Basic.Flow.Services;
 using Elsa.Basic.Flow.Services.Allocation;
 using Elsa.Basic.Flow.Services.Fulfilment;
 using Elsa.Basic.Flow.Services.Preparation;
-using Elsa.Extensions;
-using Elsa.Persistence.MongoDb.Extensions;
-using Elsa.Persistence.MongoDb.Modules.Management;
-using Elsa.Persistence.MongoDb.Modules.Runtime;
-using Elsa.Scheduling;
-using Elsa.Workflows.Runtime;
-using Elsa.Workflows.Runtime.Stimuli;
-using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
+using MongoDB.Bson;
 
 // Must be set before any MongoClient is created.
 BsonSerializer.RegisterSerializer(new GuidSerializer(GuidRepresentation.Standard));
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ── MongoDB (domain) ─────────────────────────────────────────────────────────
+// ── MongoDB (domain) ──────────────────────────────────────────────────────────
 var mongoSettings = builder.Configuration.GetSection("MongoDB");
 var mongoClient   = new MongoClient(mongoSettings["ConnectionString"]);
 
@@ -43,29 +34,9 @@ builder.Services.AddScoped<IFulfilmentRepository, MongoFulfilmentRepository>();
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<CreateFulfilmentHandler>();
 builder.Services.AddScoped<CreateAllocationHandler>();
-// MongoDB-backed scheduler — persists Delay timers so they survive restarts.
-builder.Services.AddSingleton<SchedulerWakeSignal>();
-builder.Services.AddSingleton<MongoWorkflowScheduler>();
-builder.Services.AddHostedService<SchedulerPollingService>();
 
-// ── Elsa (with MongoDB persistence) ──────────────────────────────────────────
-// Registration order: persistence first, then runtime features that depend on it.
-var elsaMongoConnection = builder.Configuration.GetConnectionString("ElsaMongo")!;
-
-builder.Services.AddElsa(elsa =>
-{
-    elsa.UseMongoDb(elsaMongoConnection);
-    elsa.UseWorkflowRuntime(r => r.UseMongoDb(_ => { }));
-    elsa.UseWorkflowManagement(m => m.UseMongoDb(_ => { }));
-    elsa.UseScheduling(scheduling =>
-    {
-        // Replace the default in-memory scheduler with the MongoDB-backed one.
-        // This makes Delay timers durable — they survive process restarts.
-        scheduling.WorkflowScheduler = sp => sp.GetRequiredService<MongoWorkflowScheduler>();
-    });
-    elsa.AddWorkflow<FulfilmentWorkflow>();
-    elsa.AddWorkflow<PreparationWorkflow>();
-});
+// ── Workflow engine + all Elsa wiring (infrastructure detail) ─────────────────
+builder.Services.AddWorkflowInfrastructure(builder.Configuration);
 
 // ─────────────────────────────────────────────────────────────────────────────
 var app = builder.Build();
@@ -73,7 +44,6 @@ var app = builder.Build();
 app.MapOpenApi();
 app.UseSwaggerUI(c => c.SwaggerEndpoint("/openapi/v1.json", "Elsa Basic Flow API"));
 app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
-
 
 app.MapPost("/api/fulfilments", async (
     CreateFulfilmentRequest request,
@@ -105,7 +75,6 @@ app.MapPost("/api/allocations", (
     CreateAllocationCommand cmd,
     CreateAllocationHandler handler) =>
 {
-    // Intentional failure: fail if current second is divisible by 3
     if (DateTime.UtcNow.Second % 3 == 0)
     {
         return Results.Problem(
@@ -119,46 +88,12 @@ app.MapPost("/api/allocations", (
 });
 
 app.MapPost("/api/preparation-outcome", async (
-    PreparationOutcomePayload payload,
-    IStimulusSender           stimulusSender,
-    ILogger<Program>          logger,
-    CancellationToken         ct) =>
+    PreparationOutcomePayload  payload,
+    IPreparationOutcomeHandler handler,
+    CancellationToken          ct) =>
 {
-    logger.LogInformation("[/api/preparation-outcome] Received outcome for preparation {Id} ({Count} container(s))", payload.Id, payload.Containers.Count);
-    foreach (var c in payload.Containers)
-        logger.LogInformation("  📦 [{ContainerId}] {ContainerType}  lines={Lines}", c.ContainerId, c.ContainerType, c.AllocatedLines.Count);
-
-    try
-    {
-        // Signal the FulfilmentWorkflow. Elsa routes to the workflow holding the bookmark
-        // for this preparation — no need to target by instance ID.
-        // Containers travel as stimulus input so WaitForPreparationsActivity can update the aggregate.
-        await stimulusSender.SendAsync(
-            "Elsa.Event",
-            new EventStimulus($"preparation-completed-{payload.Id}"),
-            new StimulusMetadata
-            {
-                Input = new Dictionary<string, object>
-                {
-                    ["Containers"] = JsonSerializer.Serialize(payload.Containers)
-                }
-            },
-            ct);
-
-        logger.LogInformation("[/api/preparation-outcome] Signal sent for preparation {Id}", payload.Id);
-        return Results.Ok();
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(ex, "[/api/preparation-outcome] Error processing outcome for preparation {Id}", payload.Id);
-        return Results.Problem($"Failed to process outcome: {ex.Message}");
-    }
+    await handler.HandleAsync(payload, ct);
+    return Results.Ok();
 });
-
-// Ensure index on elsa_scheduled_tasks.ResumeAt for the polling query.
-var elsaDb = app.Services.GetRequiredService<IMongoDatabase>();
-await elsaDb.GetCollection<BsonDocument>("elsa_scheduled_tasks")
-    .Indexes.CreateOneAsync(
-        new CreateIndexModel<BsonDocument>(Builders<BsonDocument>.IndexKeys.Ascending("ResumeAt")));
 
 app.Run();
