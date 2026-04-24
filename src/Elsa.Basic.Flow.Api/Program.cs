@@ -4,10 +4,10 @@ using Elsa.Basic.Flow.Infrastructure;
 using Elsa.Basic.Flow.Services.Allocation;
 using Elsa.Basic.Flow.Services.Fulfilment;
 using Elsa.Basic.Flow.Services.Preparation;
+using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
-using MongoDB.Bson;
 
 // Must be set before any MongoClient is created.
 BsonSerializer.RegisterSerializer(new GuidSerializer(GuidRepresentation.Standard));
@@ -34,6 +34,8 @@ builder.Services.AddScoped<IFulfilmentRepository, MongoFulfilmentRepository>();
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<CreateFulfilmentHandler>();
 builder.Services.AddScoped<CreateAllocationHandler>();
+builder.Services.AddScoped<CreatePreparationHandler>();
+builder.Services.AddScoped<ApplyContainersHandler>();
 
 // ── Workflow engine + all Elsa wiring (infrastructure detail) ─────────────────
 builder.Services.AddWorkflowInfrastructure(builder.Configuration);
@@ -85,6 +87,31 @@ app.MapPost("/api/allocations", (
 
     var result = handler.Handle(cmd);
     return Results.Ok(result);
+});
+
+app.MapPost("/api/preparations", async (
+    CreatePreparationRequest request,
+    CreatePreparationHandler handler,
+    CancellationToken ct) =>
+{
+    var cmd = new CreatePreparationCommand(
+        PrepCommandId: request.PrepCommandId,
+        FulfilmentId:  request.FulfilmentId,
+        StoreId:       request.StoreId,
+        Lines:         request.Lines);
+
+    await handler.HandleAsync(cmd, ct);
+    return Results.Accepted();
+});
+
+app.MapPost("/api/fulfilments/{id:guid}/containers", async (
+    Guid id,
+    List<PreparationContainer> containers,
+    ApplyContainersHandler handler,
+    CancellationToken ct) =>
+{
+    await handler.HandleAsync(new ApplyContainersCommand(id, containers), ct);
+    return Results.Ok();
 });
 
 app.MapPost("/api/preparation-outcome", async (

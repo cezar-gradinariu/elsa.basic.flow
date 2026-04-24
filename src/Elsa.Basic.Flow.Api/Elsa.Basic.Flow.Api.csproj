@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Elsa.Basic.Flow.Domain\Elsa.Basic.Flow.Domain.csproj" />
     <ProjectReference Include="..\Elsa.Basic.Flow.Services\Elsa.Basic.Flow.Services.csproj" />
     <ProjectReference Include="..\Elsa.Basic.Flow.Infrastructure\Elsa.Basic.Flow.Infrastructure.csproj" />
   </ItemGroup>
