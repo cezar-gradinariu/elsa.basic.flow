@@ -6,6 +6,11 @@ using Elsa.Persistence.MongoDb.Extensions;
 using Elsa.Persistence.MongoDb.Modules.Management;
 using Elsa.Persistence.MongoDb.Modules.Runtime;
 using Elsa.Scheduling;
+using Elsa.Common.RecurringTasks;
+using Elsa.Workflows.CommitStates.Strategies;
+using Elsa.Workflows.Features;
+using Elsa.Workflows.Runtime.Options;
+using Elsa.Workflows.Runtime.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Driver;
@@ -27,6 +32,12 @@ public static class WorkflowInfrastructureExtensions
 
         services.AddScoped<IPreparationOutcomeHandler, ElsaPreparationOutcomeHandler>();
 
+        // Workflows stuck in Executing state longer than InactivityThreshold are considered crashed
+        // and will be re-run by RestartInterruptedWorkflowsTask. Must be > activity HTTP timeout (30s).
+        services.Configure<RuntimeOptions>(o => o.InactivityThreshold = TimeSpan.FromMinutes(2));
+        // Scan for crashed workflows every 1 minute (default is every 5 minutes).
+        services.Configure<RecurringTaskOptions>(o => o.Schedule.ConfigureTask<RestartInterruptedWorkflowsTask>(TimeSpan.FromMinutes(1)));
+
         services.AddElsa(elsa =>
         {
             elsa.UseMongoDb(elsaMongoConnection);
@@ -36,6 +47,10 @@ public static class WorkflowInfrastructureExtensions
             {
                 scheduling.WorkflowScheduler = sp => sp.GetRequiredService<MongoWorkflowScheduler>();
             });
+            // Commit workflow state to MongoDB before each activity executes so that if the
+            // process crashes mid-activity, RestartInterruptedWorkflowsTask can re-run it
+            // from the correct activity rather than from an earlier checkpoint.
+            elsa.Configure<WorkflowsFeature>(w => w.WithDefaultActivityCommitStrategy(new ExecutingActivityStrategy()));
             elsa.AddWorkflow<FulfilmentWorkflow>();
             elsa.AddWorkflow<PreparationWorkflow>();
         });

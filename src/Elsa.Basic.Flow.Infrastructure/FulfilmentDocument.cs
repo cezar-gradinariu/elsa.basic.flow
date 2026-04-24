@@ -7,12 +7,14 @@ internal class FulfilmentDocument
 {
     [BsonId]
     [BsonGuidRepresentation(GuidRepresentation.Standard)]
-    public Guid   Id         { get; set; }
-    public string OrderNo    { get; set; } = "";
-    public string StoreNo    { get; set; } = "";
-    public string CustomerId { get; set; } = "";
-    public string Status     { get; set; } = "";
-    public int    Version    { get; set; }
+    public Guid   Id                  { get; set; }
+    public string OrderNo             { get; set; } = "";
+    public string StoreNo             { get; set; } = "";
+    public string CustomerId          { get; set; } = "";
+    public string Status              { get; set; } = "";
+    public int    Version             { get; set; }
+    // Atomically incremented by FindOneAndUpdate — not subject to optimistic concurrency races.
+    public int    PrepCompletedCount  { get; set; }
     public List<FulfilmentLineDocument> OrderLines { get; set; } = [];
     public List<ContainerDocument> Containers { get; set; } = [];
 }

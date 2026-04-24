@@ -77,13 +77,13 @@ app.MapPost("/api/allocations", (
     CreateAllocationCommand cmd,
     CreateAllocationHandler handler) =>
 {
-    if (DateTime.UtcNow.Second % 3 == 0)
-    {
-        return Results.Problem(
-            title:      "Allocation Service Temporarily Unavailable",
-            detail:     "Service is experiencing temporary issues. Please try again.",
-            statusCode: 503);
-    }
+    // if (DateTime.UtcNow.Second % 3 == 0)
+    // {
+    //     return Results.Problem(
+    //         title:      "Allocation Service Temporarily Unavailable",
+    //         detail:     "Service is experiencing temporary issues. Please try again.",
+    //         statusCode: 503);
+    // }
 
     var result = handler.Handle(cmd);
     return Results.Ok(result);

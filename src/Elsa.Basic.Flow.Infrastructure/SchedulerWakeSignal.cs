@@ -11,8 +11,12 @@ public sealed class SchedulerWakeSignal
 
     public void Notify()
     {
-        if (_sem.CurrentCount == 0)
-            _sem.Release();
+        // Try to release the semaphore. Ignore SemaphoreFullException — it means the signal
+        // is already pending (another Notify fired first and the poller hasn't consumed it yet).
+        // Catching is safer than checking CurrentCount first, which has a TOCTOU race when
+        // multiple schedulers notify concurrently.
+        try { _sem.Release(); }
+        catch (SemaphoreFullException) { }
     }
 
     public Task<bool> WaitAsync(TimeSpan timeout, CancellationToken ct)

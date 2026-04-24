@@ -68,8 +68,20 @@ public class MongoFulfilmentRepository(
                 Builders<FulfilmentDocument>.Filter.Eq(x => x.Id,      doc.Id),
                 Builders<FulfilmentDocument>.Filter.Eq(x => x.Version, aggregate.Version - 1));
 
+            // Use $set rather than ReplaceOneAsync so that fields managed outside the aggregate
+            // (e.g. PrepCompletedCount, which is incremented atomically by IncrementPrepCompletedAsync)
+            // are never overwritten with default values.
+            var update = Builders<FulfilmentDocument>.Update
+                .Set(x => x.OrderNo,    doc.OrderNo)
+                .Set(x => x.StoreNo,    doc.StoreNo)
+                .Set(x => x.CustomerId, doc.CustomerId)
+                .Set(x => x.Status,     doc.Status)
+                .Set(x => x.Version,    doc.Version)
+                .Set(x => x.OrderLines, doc.OrderLines)
+                .Set(x => x.Containers, doc.Containers);
+
             logger.LogDebug("Updating aggregate {Id}: v{Old} → v{New}", aggregate.FulfilmentId, aggregate.Version - 1, aggregate.Version);
-            var result = await Col.ReplaceOneAsync(filter, doc, cancellationToken: ct);
+            var result = await Col.UpdateOneAsync(filter, update, cancellationToken: ct);
 
             if (result.MatchedCount == 0)
             {
@@ -132,5 +144,21 @@ public class MongoFulfilmentRepository(
             )).ToList(),
             Enum.TryParse<FulfilmentStatus>(doc.Status, out var status) ? status : FulfilmentStatus.Created,
             doc.Version);
+    }
+
+    public async Task<int> IncrementPrepCompletedAsync(Guid id, CancellationToken ct = default)
+    {
+        // Uses MongoDB $inc for an atomic server-side increment.
+        // Safe to call concurrently from multiple workflow callbacks — no read-modify-write race.
+        var filter = Builders<FulfilmentDocument>.Filter.Eq(x => x.Id, id);
+        var update = Builders<FulfilmentDocument>.Update.Inc(x => x.PrepCompletedCount, 1);
+        var options = new FindOneAndUpdateOptions<FulfilmentDocument>
+        {
+            ReturnDocument = ReturnDocument.After,
+            Projection     = Builders<FulfilmentDocument>.Projection.Include(x => x.PrepCompletedCount)
+        };
+
+        var updated = await Col.FindOneAndUpdateAsync(filter, update, options, ct);
+        return updated?.PrepCompletedCount ?? 0;
     }
 }

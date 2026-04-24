@@ -14,7 +14,6 @@ namespace Elsa.Basic.Flow.Services.Fulfilment;
 internal class WaitForPreparationsActivity : Activity
 {
     private const string TotalKey      = "_prep_total";
-    private const string CompletedKey  = "_prep_completed";
     private const string FulfilmentKey = "_prep_fulfilment_id";
     private const string ContainersKey = "Containers";
 
@@ -28,7 +27,6 @@ internal class WaitForPreparationsActivity : Activity
         var props        = context.WorkflowExecutionContext.Properties;
 
         props[TotalKey]      = commands.Count;
-        props[CompletedKey]  = 0;
         props[FulfilmentKey] = fulfilmentId;
 
         context.GetRequiredService<ILogger<WaitForPreparationsActivity>>()
@@ -52,12 +50,9 @@ internal class WaitForPreparationsActivity : Activity
     {
         var props        = context.WorkflowExecutionContext.Properties;
         var total        = props.TryGetValue(TotalKey,      out var t) ? Convert.ToInt32(t) : 0;
-        var completed    = props.TryGetValue(CompletedKey,  out var c) ? Convert.ToInt32(c) + 1 : 1;
         var fulfilmentId = props.TryGetValue(FulfilmentKey, out var f) ? f?.ToString() ?? string.Empty : string.Empty;
-        props[CompletedKey] = completed;
 
         var logger = context.GetRequiredService<ILogger<WaitForPreparationsActivity>>();
-        logger.LogInformation("[FulfilmentWorkflow] Preparation completed ({Completed}/{Total})", completed, total);
 
         var input          = context.WorkflowExecutionContext.Input;
         var containersJson = input?.TryGetValue(ContainersKey, out var raw) == true ? raw?.ToString() : null;
@@ -83,6 +78,18 @@ internal class WaitForPreparationsActivity : Activity
 
             logger.LogInformation("[FulfilmentWorkflow] Applied {Count} container(s) to fulfilment {FulfilmentId}", containers.Count, fId);
         }
+
+        // Atomically increment the completion counter in MongoDB.
+        // WorkflowExecutionContext.Properties uses full-document replace — concurrent callbacks
+        // would race and lose updates. $inc is server-side atomic regardless of concurrency.
+        int completed = 0;
+        if (Guid.TryParse(fulfilmentId, out var fulfilmentGuid))
+        {
+            var repository = context.GetRequiredService<IFulfilmentRepository>();
+            completed = await repository.IncrementPrepCompletedAsync(fulfilmentGuid, context.CancellationToken);
+        }
+
+        logger.LogInformation("[FulfilmentWorkflow] Preparation completed ({Completed}/{Total})", completed, total);
 
         if (completed >= total)
         {
