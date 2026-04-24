@@ -18,6 +18,7 @@ public class FulfilmentWorkflow : WorkflowBase
         {
             Activities =
             [
+                new InitialiseFulfilmentPropertiesActivity(),
                 new AllocateFulfilmentActivity
                 {
                     FulfilmentId = new Output<string>(fulfilmentId),

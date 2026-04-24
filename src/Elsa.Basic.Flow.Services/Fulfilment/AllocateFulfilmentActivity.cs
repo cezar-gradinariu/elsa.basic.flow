@@ -12,12 +12,8 @@ namespace Elsa.Basic.Flow.Services.Fulfilment;
 
 internal class AllocateFulfilmentActivity : Activity
 {
-    private const string RetryCountKey    = "_alloc_retry_count";
-    private const string FulfilmentIdKey  = "_alloc_fulfilment_id";
-    private const string OrderNoKey       = "_alloc_order_no";
-    private const string StoreIdKey       = "_alloc_store_id";
-    private const string OrderLinesKey    = "_alloc_order_lines";
-    private const int    MaxAttempts      = 4;
+    private const string RetryCountKey = "_alloc_retry_count";
+    private const int    MaxAttempts   = 4;
 
     public Output<AllocationResult>? Result       { get; set; }
     public Output<string>?           FulfilmentId { get; set; }
@@ -30,27 +26,14 @@ internal class AllocateFulfilmentActivity : Activity
         var props      = context.WorkflowExecutionContext.Properties;
         var retryCount = props.TryGetValue(RetryCountKey, out var r) ? Convert.ToInt32(r) : 0;
 
-        // On first run, copy Input values into workflow Properties so they survive
-        // process restarts. WorkflowExecutionContext.Input is not restored on restart
-        // by DefaultWorkflowRestarter — only Properties (part of WorkflowState) are.
-        if (!props.ContainsKey(FulfilmentIdKey))
-        {
-            var input = context.WorkflowExecutionContext.Input;
-            object? fid = null, ono = null, sid = null, ol = null;
-            input?.TryGetValue("FulfilmentId", out fid);
-            input?.TryGetValue("OrderNo",      out ono);
-            input?.TryGetValue("StoreId",      out sid);
-            input?.TryGetValue("OrderLines",   out ol);
-            props[FulfilmentIdKey] = fid?.ToString() ?? "unknown";
-            props[OrderNoKey]      = ono?.ToString() ?? string.Empty;
-            props[StoreIdKey]      = sid?.ToString() ?? string.Empty;
-            props[OrderLinesKey]   = ol?.ToString()  ?? "[]";
-        }
-
-        var fulfilmentId = props[FulfilmentIdKey]?.ToString() ?? "unknown";
-        var orderNo      = props[OrderNoKey]?.ToString()      ?? string.Empty;
-        var storeId      = props[StoreIdKey]?.ToString()      ?? string.Empty;
-        var orderLines   = JsonSerializer.Deserialize<List<OrderLine>>(props[OrderLinesKey]?.ToString() ?? "[]") ?? [];
+        // Properties were seeded from Input by InitialiseFulfilmentPropertiesActivity
+        // which runs first in the workflow sequence and completes before this activity.
+        // Because ExecutingActivityStrategy commits state after that activity completes,
+        // these values are always present here — on first run and on crash restart.
+        var fulfilmentId = props[InitialiseFulfilmentPropertiesActivity.FulfilmentIdKey]?.ToString() ?? "unknown";
+        var orderNo      = props[InitialiseFulfilmentPropertiesActivity.OrderNoKey]?.ToString()      ?? string.Empty;
+        var storeId      = props[InitialiseFulfilmentPropertiesActivity.StoreIdKey]?.ToString()      ?? string.Empty;
+        var orderLines   = JsonSerializer.Deserialize<List<OrderLine>>(props[InitialiseFulfilmentPropertiesActivity.OrderLinesKey]?.ToString() ?? "[]") ?? [];
         var cmd          = new CreateAllocationCommand(orderNo, storeId, orderLines);
 
         var config  = context.GetRequiredService<IConfiguration>();
