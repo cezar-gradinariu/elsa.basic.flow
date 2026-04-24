@@ -1,61 +1,55 @@
+using System.Net.Http.Json;
 using System.Text.Json;
 using Elsa.Basic.Flow.Services.Allocation;
-using Microsoft.Extensions.Logging;
 using Elsa.Basic.Flow.Services.Preparation;
 using Elsa.Workflows;
 using Elsa.Workflows.Models;
-using Elsa.Workflows.Runtime;
-using Elsa.Workflows.Runtime.Contracts;
-using Elsa.Workflows.Runtime.Messages;
-using Elsa.Workflows.Runtime.Requests;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace Elsa.Basic.Flow.Services.Fulfilment;
 
 internal class SendPrepareCommandsActivity : Activity
 {
     public Input<AllocationResult>?      AllocationResult { get; set; }
+    public Input<string>?                FulfilmentId     { get; set; }
     public Output<List<PrepareCommand>>? PrepareCommands  { get; set; }
 
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        var result  = context.Get(AllocationResult)!;
-        var logger  = context.GetRequiredService<ILogger<SendPrepareCommandsActivity>>();
+        var result       = context.Get(AllocationResult)!;
+        var fulfilmentId = Guid.Parse(context.Get(FulfilmentId) ?? throw new InvalidOperationException("FulfilmentId is required"));
+        var logger       = context.GetRequiredService<ILogger<SendPrepareCommandsActivity>>();
+        var config       = context.GetRequiredService<IConfiguration>();
+        var factory      = context.GetRequiredService<IHttpClientFactory>();
+        var baseUrl      = config["Api:BaseUrl"] ?? "http://localhost:5000";
 
         var commands = result.StoreAllocations
             .Select(a => new PrepareCommand(Guid.NewGuid(), a.StoreId, a.Lines))
             .ToList();
 
         logger.LogInformation("[FulfilmentWorkflow] Dispatching {Count} preparation(s) for order {OrderNo}", commands.Count, result.OrderNo);
-        foreach (var cmd in commands)
-            logger.LogInformation("  → PrepareCommand id={Id}  storeId={StoreId}  lines={Lines}", cmd.Id, cmd.StoreId, cmd.Lines.Count);
 
-        context.Set(PrepareCommands, commands);
-
-        var runtime    = context.GetRequiredService<IWorkflowRuntime>();
-        var dispatcher = context.GetRequiredService<IWorkflowDispatcher>();
+        using var http = factory.CreateClient();
+        http.Timeout = TimeSpan.FromSeconds(30);
 
         foreach (var cmd in commands)
         {
-            var client = await runtime.CreateClientAsync(cancellationToken: context.CancellationToken);
-            await client.CreateInstanceAsync(new CreateWorkflowInstanceRequest
+            var request = new
             {
-                WorkflowDefinitionHandle = WorkflowDefinitionHandle.ByDefinitionId(nameof(PreparationWorkflow)),
-                CorrelationId            = $"preparation-{cmd.Id}",
-                Input = new Dictionary<string, object>
-                {
-                    ["PrepareCommandId"] = cmd.Id.ToString(),
-                    ["StoreId"]          = cmd.StoreId,
-                    ["Lines"]            = JsonSerializer.Serialize(cmd.Lines)
-                }
-            }, context.CancellationToken);
+                PrepCommandId = cmd.Id,
+                FulfilmentId  = fulfilmentId,
+                StoreId       = cmd.StoreId,
+                Lines         = cmd.Lines
+            };
 
-            await dispatcher.DispatchAsync(
-                new DispatchWorkflowInstanceRequest { InstanceId = client.WorkflowInstanceId },
-                context.CancellationToken);
+            var response = await http.PostAsJsonAsync($"{baseUrl}/api/preparations", request, context.CancellationToken);
+            response.EnsureSuccessStatusCode();
 
-            logger.LogInformation("  ✓ PrepareCommand id={Id} dispatched as workflow {WorkflowInstanceId}", cmd.Id, client.WorkflowInstanceId);
+            logger.LogInformation("  → PrepareCommand id={Id}  storeId={StoreId}  lines={Lines} dispatched", cmd.Id, cmd.StoreId, cmd.Lines.Count);
         }
 
+        context.Set(PrepareCommands, commands);
         await context.CompleteActivityAsync();
     }
 }

@@ -26,6 +26,7 @@ public class FulfilmentWorkflow : WorkflowBase
                 new SendPrepareCommandsActivity
                 {
                     AllocationResult = new Input<AllocationResult>(allocationResult),
+                    FulfilmentId     = new Input<string>(fulfilmentId),
                     PrepareCommands  = new Output<List<PrepareCommand>>(prepareCommands)
                 },
                 new WaitForPreparationsActivity

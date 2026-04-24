@@ -1,3 +1,4 @@
+using System.Net.Http.Json;
 using System.Text.Json;
 using Elsa.Basic.Flow.Domain;
 using Elsa.Basic.Flow.Services.Preparation;
@@ -5,16 +6,17 @@ using Elsa.Workflows;
 using Elsa.Workflows.Models;
 using Elsa.Workflows.Runtime;
 using Elsa.Workflows.Runtime.Stimuli;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Elsa.Basic.Flow.Services.Fulfilment;
 
 internal class WaitForPreparationsActivity : Activity
 {
-    private const string TotalKey       = "_prep_total";
-    private const string CompletedKey   = "_prep_completed";
-    private const string FulfilmentKey  = "_prep_fulfilment_id";
-    private const string ContainersKey  = "Containers";
+    private const string TotalKey      = "_prep_total";
+    private const string CompletedKey  = "_prep_completed";
+    private const string FulfilmentKey = "_prep_fulfilment_id";
+    private const string ContainersKey = "Containers";
 
     public Input<List<PrepareCommand>>? PrepareCommands { get; set; }
     public Input<string>?               FulfilmentId    { get; set; }
@@ -57,7 +59,6 @@ internal class WaitForPreparationsActivity : Activity
         var logger = context.GetRequiredService<ILogger<WaitForPreparationsActivity>>();
         logger.LogInformation("[FulfilmentWorkflow] Preparation completed ({Completed}/{Total})", completed, total);
 
-        // Containers arrive via StimulusMetadata.Input merged into WorkflowExecutionContext.Input.
         var input          = context.WorkflowExecutionContext.Input;
         var containersJson = input?.TryGetValue(ContainersKey, out var raw) == true ? raw?.ToString() : null;
         var containers     = containersJson is not null
@@ -66,30 +67,21 @@ internal class WaitForPreparationsActivity : Activity
 
         if (containers.Count > 0 && Guid.TryParse(fulfilmentId, out var fId))
         {
-            var repository = context.GetRequiredService<IFulfilmentRepository>();
-            const int maxRetries = 5;
-            for (var attempt = 1; attempt <= maxRetries; attempt++)
-            {
-                try
-                {
-                    var aggregate = await repository.LoadAsync(fId, context.CancellationToken);
-                    if (aggregate is null)
-                    {
-                        logger.LogWarning("[FulfilmentWorkflow] Aggregate {FulfilmentId} not found — skipping container update", fId);
-                        break;
-                    }
-                    aggregate.UpdateContainers(containers);
-                    await repository.SaveAsync(aggregate, context.CancellationToken);
-                    logger.LogInformation("[FulfilmentWorkflow] Aggregate {FulfilmentId} updated with {Count} container(s)", fId, containers.Count);
-                    break;
-                }
-                catch (ConcurrencyException) when (attempt < maxRetries)
-                {
-                    var delay = TimeSpan.FromMilliseconds(100 * Math.Pow(2, attempt - 1));
-                    logger.LogWarning("[FulfilmentWorkflow] Concurrency conflict (attempt {Attempt}/{Max}), retrying in {Delay}ms", attempt, maxRetries, delay.TotalMilliseconds);
-                    await Task.Delay(delay, context.CancellationToken);
-                }
-            }
+            var config  = context.GetRequiredService<IConfiguration>();
+            var factory = context.GetRequiredService<IHttpClientFactory>();
+            var baseUrl = config["Api:BaseUrl"] ?? "http://localhost:5000";
+
+            using var http = factory.CreateClient();
+            http.Timeout = TimeSpan.FromSeconds(30);
+
+            var response = await http.PostAsJsonAsync(
+                $"{baseUrl}/api/fulfilments/{fId}/containers",
+                containers,
+                context.CancellationToken);
+
+            response.EnsureSuccessStatusCode();
+
+            logger.LogInformation("[FulfilmentWorkflow] Applied {Count} container(s) to fulfilment {FulfilmentId}", containers.Count, fId);
         }
 
         if (completed >= total)
