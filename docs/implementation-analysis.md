@@ -181,13 +181,15 @@ The activity directly injects `IFulfilmentRepository` and calls `IncrementPrepCo
 
 ### 19. `InitialiseFulfilmentPropertiesActivity` — purpose is unclear from code
 
-**Status: OPEN.**
+**Status: VERIFIED — KEPT.**
 
-This activity exists solely to copy four values from `WorkflowExecutionContext.Input` into `WorkflowExecutionContext.Properties` before any other activity runs. The reason is durability: with `ExecutingActivityStrategy`, Input is committed before execution, but the code comment implies concern that Input could be lost on resume.
+**Verified experimentally (2026-04-26):** `WorkflowExecutionContext.Input` is **not** preserved across process restarts in Elsa 3.6. When a workflow resumes after a crash, `Input` is empty — only `WorkflowExecutionContext.Properties` survive (they are serialised with the workflow instance document in MongoDB).
 
-**Concern:** `ExecutingActivityStrategy` commits state (including Input) before each activity executes. The need for this extra first activity is not fully justified by Elsa's documented semantics, and it adds noise to the workflow definition.
+The activity was temporarily removed and `AllocateFulfilmentActivity` was changed to read from `Input` directly. After a process kill mid-execution, the resumed workflow sent an allocation request with empty order lines, which faulted the workflow after all 4 retry attempts.
 
-**Recommendation:** Verify whether Elsa 3.6 with `ExecutingActivityStrategy` preserves Input across restarts without the copy. If it does, remove the activity and read from Input directly in the downstream activities. If Input is genuinely lost on resume (Elsa bug or design quirk), document this explicitly as a known Elsa limitation so future maintainers understand why the activity exists.
+`InitialiseFulfilmentPropertiesActivity` is necessary. Its doc comment has been updated to state this explicitly so future maintainers do not remove it again.
+
+Also confirmed: Elsa has a built-in "Restarting interrupted workflows" mechanism that detects workflow instances that were mid-execution at the time of a crash and re-dispatches them on startup. This fires approximately 5 minutes after startup (coincides with the `SchedulerPollingService` max sleep interval).
 
 ---
 
@@ -269,7 +271,7 @@ A failed `POST /api/preparations` immediately threw via `EnsureSuccessStatusCode
 | 16 | Non-durable retry in preparation outcome activity | Medium | **Fixed** |
 | 17 | AllocateFulfilmentActivity — overly complex manual retry | Medium | **Fixed** |
 | 18 | WaitForPreparationsActivity couples workflow to domain repository | Medium | **Open** |
-| 19 | InitialiseFulfilmentPropertiesActivity — purpose unclear / may be unnecessary | Low | **Open** |
+| 19 | InitialiseFulfilmentPropertiesActivity — purpose unclear / may be unnecessary | Low | Verified necessary — Input lost on restart |
 | 20 | Two MongoDB databases — no transactional boundary | Low | **Open** |
 | 21 | WaitForPreparationsActivity — $inc after failable POST → silent deadlock | Critical | **Fixed** |
 | 22 | FulfilmentStatus never transitions beyond Created | High | **Fixed** |

@@ -6,9 +6,9 @@ namespace Elsa.Basic.Flow.Services.Fulfilment;
 /// First activity in FulfilmentWorkflow. Copies workflow Input values into
 /// WorkflowExecutionContext.Properties so they survive process restarts.
 ///
-/// With ExecutingActivityStrategy, Elsa commits state BEFORE an activity runs.
-/// By completing this activity first, the Properties are already persisted when
-/// AllocateFulfilmentActivity is committed — so a crash+restart recovers correctly.
+/// Verified: Elsa 3.6 does NOT preserve WorkflowExecutionContext.Input across
+/// process restarts — Input is empty when a workflow resumes after a crash.
+/// Properties are serialised with the workflow instance document and survive.
 /// </summary>
 internal class InitialiseFulfilmentPropertiesActivity : Activity
 {
