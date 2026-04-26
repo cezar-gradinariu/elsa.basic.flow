@@ -319,6 +319,126 @@ The `var sent = false` flag and `if (!sent) throw new InvalidOperationException(
 
 ---
 
+## Sixth-pass findings (2026-04-26)
+
+### 32. `BuildContainers` — `OrderLineNo` set to `line.Sku` (copy-paste bug)
+
+**Status: OPEN.**
+
+In `CreateAndSendPreparationOutcomeActivity.BuildContainers`:
+
+```csharp
+buckets[i % containerCount].Add(new AllocatedLine(line.Sku, line.Sku, line.Quantity));
+//                                                  ^^^^^^^^ should be line.OrderNo
+```
+
+`AllocatedLine` is `record AllocatedLine(string OrderLineNo, string ArticleId, int Quantity)`. The first argument (`OrderLineNo`) is populated with `line.Sku` instead of `line.OrderNo`. Every `AllocatedLine` written to MongoDB has `OrderLineNo == ArticleId == Sku` — the order line reference is silently lost.
+
+**Fix:** change to `new AllocatedLine(line.OrderNo, line.Sku, line.Quantity)`.
+
+---
+
+### 33. `TrySendOutcomeAsync` swallows `OperationCanceledException`
+
+**Status: OPEN.**
+
+```csharp
+catch (Exception ex)   // catches OperationCanceledException
+{
+    logger.LogWarning(...);
+    succeeded = false;
+}
+```
+
+When the app shuts down, `context.CancellationToken` is cancelled and `PostAsJsonAsync` throws `OperationCanceledException`. This is caught, `succeeded = false`, and the code schedules a durable retry in MongoDB instead of propagating the cancellation. The same bug was fixed in `SendPrepareCommandsActivity` (see #27) but this activity was missed.
+
+**Fix:** add `when (ex is not OperationCanceledException)` to the catch guard.
+
+---
+
+### 34. `ElsaPreparationOutcomeHandler` — `StimulusMetadata.WorkflowInstanceId` never set; `PrepareCommand` lacks `ParentWorkflowInstanceId`
+
+**Status: OPEN.**
+
+```csharp
+await stimulusSender.SendAsync(
+    RuntimeStimulusNames.Event,
+    new EventStimulus($"preparation-completed-{payload.Id}"),
+    new StimulusMetadata { Input = ... },   // no WorkflowInstanceId
+    ct);
+```
+
+`AGENTS.md` states the intended pattern is `StimulusMetadata { WorkflowInstanceId = ... }` threaded through via `PrepareCommand.ParentWorkflowInstanceId`. Neither `PrepareCommand` carries that field, nor does `SendPrepareCommandsActivity` thread through the parent instance ID. As a result Elsa performs a global bookmark scan across all live workflow instances rather than targeting one. Functionally safe because the event name embeds a UUID, but contradicts the design intent and scales poorly under many concurrent workflows.
+
+**Fix:** add `ParentWorkflowInstanceId` to `PrepareCommand` and the anonymous request object in `SendPrepareCommandsActivity`; surface it in `PreparationOutcomePayload`; set `StimulusMetadata.WorkflowInstanceId` in `ElsaPreparationOutcomeHandler`.
+
+---
+
+### 35. `AllocateFulfilmentActivity` — null `AllocationResult` from `ReadFromJsonAsync` not guarded
+
+**Status: OPEN.**
+
+```csharp
+var result = await response.Content.ReadFromJsonAsync<AllocationResult>(context.CancellationToken);
+context.Set(Result, result);   // result may be null
+```
+
+If the API returns 200 with an empty or malformed body, `result` is null. `SendPrepareCommandsActivity` then calls `context.Get(AllocationResult)!` which throws `NullReferenceException`, faulting the workflow with a confusing message.
+
+**Fix:** add a null-check after `ReadFromJsonAsync` and throw a clear `InvalidOperationException` if null.
+
+---
+
+### 36. `Guid.Parse(request.FulfilmentId)` in endpoint — `FormatException` returns 500 instead of 400
+
+**Status: OPEN.**
+
+```csharp
+var fulfilmentId = Guid.Parse(request.FulfilmentId);   // throws FormatException on bad input
+```
+
+An invalid GUID in the request body propagates unhandled as a 500 response. Should be validated at the API boundary.
+
+**Fix:** use `Guid.TryParse` and return `Results.BadRequest(...)` on failure.
+
+---
+
+### 37. `WaitForPreparationsActivity` — null-bang `!` on `PrepareCommands` input
+
+**Status: OPEN.**
+
+```csharp
+var commands = context.Get(PrepareCommands)!;
+```
+
+If `PrepareCommands` is unset, this throws `NullReferenceException` with no diagnostic message. Inconsistent with every other activity in the codebase which uses `TryGetValue`/null checks or explicit guard clauses.
+
+**Fix:** replace with a guarded check and a clear `InvalidOperationException`.
+
+---
+
+### 38. `WaitForPreparationsActivity` — zero-command case is a silent deadlock
+
+**Status: OPEN.**
+
+If `commands.Count == 0`, `ExecuteAsync` registers no bookmarks and returns without calling `CompleteActivityAsync`. The workflow suspends at this activity forever. The guard in `CreateAllocationHandler` (#10) prevents this in the happy path, but there is no in-activity defensive short-circuit.
+
+**Fix:** add `if (commands.Count == 0) { await context.CompleteActivityAsync(); return; }` at the start of `ExecuteAsync`.
+
+---
+
+### 39. Analysis doc — stale paragraph under #20 contradicts its own "Fixed" status
+
+**Status: OPEN (documentation).**
+
+The paragraph immediately below the "Fixed" status for #20 still reads:
+
+> `CreateFulfilmentHandler` writes the domain aggregate to `fms.fulfilments`, then creates the Elsa workflow instance in `fms-workflows`. These are separate MongoDB databases…
+
+`fms-workflows` no longer exists — both now use `fms`. The concern paragraph should be removed or struck through so it does not mislead future maintainers.
+
+---
+
 ## Summary
 
 | # | Finding | Severity | Status |
@@ -354,3 +474,11 @@ The `var sent = false` flag and `if (!sent) throw new InvalidOperationException(
 | 29 | `"Elsa.Event"` string literal instead of RuntimeStimulusNames.Event | Low | **Fixed** |
 | 30 | Emoji in log line | Low | **Fixed** |
 | 31 | Dictionary indexer instead of TryGetValue in AllocateFulfilmentActivity | Low | **Fixed** |
+| 32 | `BuildContainers` — `OrderLineNo` set to `line.Sku` (copy-paste bug, silent data corruption) | Medium | **Open** |
+| 33 | `TrySendOutcomeAsync` swallows `OperationCanceledException` on shutdown | Medium | **Open** |
+| 34 | `ElsaPreparationOutcomeHandler` — `WorkflowInstanceId` not set; `PrepareCommand` lacks `ParentWorkflowInstanceId` | Medium | **Open** |
+| 35 | `AllocateFulfilmentActivity` — null `AllocationResult` from `ReadFromJsonAsync` not guarded | Low | **Open** |
+| 36 | `Guid.Parse` in `/api/fulfilments` endpoint — `FormatException` returns 500 instead of 400 | Low | **Open** |
+| 37 | `WaitForPreparationsActivity` — null-bang `!` on `PrepareCommands` input | Low | **Open** |
+| 38 | `WaitForPreparationsActivity` — zero-command case is a silent deadlock | Low | **Open** |
+| 39 | Analysis doc — stale `fms-workflows` paragraph under #20 contradicts Fixed status | Docs | **Open** |
