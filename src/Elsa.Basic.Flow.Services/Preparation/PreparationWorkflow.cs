@@ -23,9 +23,7 @@ public class PreparationWorkflow : WorkflowBase
                     LinesJsonOut        = new Output<string>(linesJson),
                     DelayOut            = new Output<TimeSpan>(delayDuration)
                 },
-                new WriteLine("[PreparationWorkflow] Starting delay..."),
                 new Delay(delayDuration),
-                new WriteLine("[PreparationWorkflow] Delay completed — building outcome payload"),
                 new CreateAndSendPreparationOutcomeActivity
                 {
                     PrepareCommandIdIn = new Input<string>(prepareCommandId),

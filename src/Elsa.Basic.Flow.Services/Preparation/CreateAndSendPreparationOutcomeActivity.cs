@@ -40,6 +40,7 @@ internal class CreateAndSendPreparationOutcomeActivity : Activity
         props[ContainersJsonKey] = JsonSerializer.Serialize(containers);
 
         var logger = context.GetRequiredService<ILogger<CreateAndSendPreparationOutcomeActivity>>();
+        logger.LogInformation("[PreparationWorkflow] Delay completed — building outcome payload");
         LogPayload(logger, id, containers);
 
         await TrySendOutcomeAsync(context);

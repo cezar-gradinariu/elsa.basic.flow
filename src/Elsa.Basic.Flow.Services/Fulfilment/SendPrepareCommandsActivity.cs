@@ -53,7 +53,7 @@ internal class SendPrepareCommandsActivity : Activity
                     response.EnsureSuccessStatusCode();
                     break;
                 }
-                catch (Exception ex) when (attempt < delays.Length)
+                catch (Exception ex) when (attempt < delays.Length && ex is not OperationCanceledException)
                 {
                     logger.LogWarning(ex, "  → PrepareCommand id={Id} POST failed (attempt {Attempt}/{Max}), retrying in {Delay}s", cmd.Id, attempt + 1, delays.Length + 1, delays[attempt]);
                     await Task.Delay(TimeSpan.FromSeconds(delays[attempt]), context.CancellationToken);

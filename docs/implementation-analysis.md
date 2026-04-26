@@ -265,25 +265,25 @@ A failed `POST /api/preparations` immediately threw via `EnsureSuccessStatusCode
 
 ### 25. `SchedulerPollingService` — obsolete `ExportWorkflowStateAsync` API
 
-**Status: OPEN.**
+**Status: FIXED.**
 
-`SchedulerPollingService` calls `IWorkflowRuntime.ExportWorkflowStateAsync(instanceId, ct)`, which is marked `[Obsolete]` in Elsa 3.6. The build emits CS0618: *Use the client API instead, retrieved from CreateClientAsync*. Should be replaced with the client-based equivalent.
+`SchedulerPollingService` called `IWorkflowRuntime.ExportWorkflowStateAsync(instanceId, ct)`, which is marked `[Obsolete]` in Elsa 3.6. Replaced with the client API: `runtime.CreateClientAsync(instanceId, ct)` returns an instance-scoped client; `client.ExportStateAsync(ct)` performs the equivalent existence check and still throws `WorkflowInstanceNotFoundException` for stale tasks.
 
 ---
 
 ### 26. `PreparationWorkflow` uses `WriteLine` activities — bypasses formatter
 
-**Status: OPEN.**
+**Status: FIXED.**
 
-`new WriteLine("[PreparationWorkflow] Starting delay...")` and `new WriteLine("...Delay completed...")` write directly to `Console.Out`, bypassing `WorkflowConsoleFormatter`. They produce raw unformatted output with no timestamp, no log level badge, and no colour. Should be replaced with `ILogger` calls inside the adjacent activities.
+`new WriteLine("[PreparationWorkflow] Starting delay...")` and `new WriteLine("...Delay completed...")` wrote directly to `Console.Out`, bypassing `WorkflowConsoleFormatter`. Removed both from the workflow. "Delay completed" is now logged via `ILogger` at the start of `CreateAndSendPreparationOutcomeActivity.ExecuteAsync`; the delay info is already present in `LogPreparationRequestActivity`'s existing log line.
 
 ---
 
 ### 27. Retry loop in `SendPrepareCommandsActivity` catches `OperationCanceledException`
 
-**Status: OPEN.**
+**Status: FIXED.**
 
-`catch (Exception ex) when (attempt < delays.Length)` catches all exceptions including `OperationCanceledException`. A cancelled workflow would silently retry instead of propagating cancellation immediately. The when-guard should add `&& ex is not OperationCanceledException`.
+`catch (Exception ex) when (attempt < delays.Length)` was catching all exceptions including `OperationCanceledException`. Added `&& ex is not OperationCanceledException` to the when-guard so cancellation propagates immediately rather than triggering a retry.
 
 ---
 
@@ -347,9 +347,9 @@ The `var sent = false` flag and `if (!sent) throw new InvalidOperationException(
 | 22 | FulfilmentStatus never transitions beyond Created | High | **Fixed** |
 | 23 | SendPrepareCommandsActivity — no retry on preparation POST | High | **Fixed** |
 | 24 | PreparationWorkflow — Input lost on restart (LogPreparationRequestActivity) | High | **Fixed** |
-| 25 | ExportWorkflowStateAsync obsolete API (CS0618 warning) | Medium | **Open** |
-| 26 | PreparationWorkflow uses WriteLine — bypasses formatter | Medium | **Open** |
-| 27 | Retry loop catches OperationCanceledException | Medium | **Open** |
+| 25 | ExportWorkflowStateAsync obsolete API (CS0618 warning) | Medium | **Fixed** |
+| 26 | PreparationWorkflow uses WriteLine — bypasses formatter | Medium | **Fixed** |
+| 27 | Retry loop catches OperationCanceledException | Medium | **Fixed** |
 | 28 | `if (!sent) throw` dead code in SendPrepareCommandsActivity | Low | **Fixed** |
 | 29 | `"Elsa.Event"` string literal instead of RuntimeStimulusNames.Event | Low | **Fixed** |
 | 30 | Emoji in log line | Low | **Fixed** |

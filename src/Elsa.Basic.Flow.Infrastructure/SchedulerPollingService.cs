@@ -74,10 +74,11 @@ public class SchedulerPollingService(
         {
             using var scope   = scopeFactory.CreateScope();
             var       runtime = scope.ServiceProvider.GetRequiredService<IWorkflowRuntime>();
+            var       client  = await runtime.CreateClientAsync(task.WorkflowInstanceId, ct);
 
             try
             {
-                await runtime.ExportWorkflowStateAsync(task.WorkflowInstanceId, ct);
+                await client.ExportStateAsync(ct);
             }
             catch (WorkflowInstanceNotFoundException)
             {
