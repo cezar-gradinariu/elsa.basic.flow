@@ -154,18 +154,16 @@ Replaced the inline `for`-loop + `await Task.Delay(…)` with the same durable b
 
 ### 17. `AllocateFulfilmentActivity` — overly complex manual retry pattern
 
-**Status: OPEN.**
+**Status: FIXED.**
 
-The durable retry in `AllocateFulfilmentActivity` is correct but hand-rolled at a low level:
+The hand-rolled bookmark + `IWorkflowScheduler` retry loop has been replaced with a declarative `While` + built-in `Delay` pattern in `FulfilmentWorkflow`:
 
-- Manually calls `context.CreateBookmark(…)` to suspend.
-- Manually calls `scheduler.ScheduleAtAsync(…)` to re-trigger the bookmark.
-- Manually tracks `AttemptCount` in `WorkflowExecutionContext.Properties`.
-- Manually wires a `TryAllocateAsync` callback that re-runs the HTTP call and reschedules if needed.
+- `AllocateFulfilmentActivity` is now a single-attempt activity (~55 lines, down from ~90). It makes one HTTP call, sets `Succeeded` / `Result` / `FulfilmentId` / `NextDelay` outputs, increments a retry counter in Properties, and throws only on exhaustion.
+- `FulfilmentWorkflow` wraps it in `new While(body) { Condition = new Input<bool>(ctx => !allocationSuccess.Get(ctx)) }` with `new If(!succeeded) { Then = new Delay(nextDelay) }` inside the loop body.
+- Durability is preserved: `Delay` (built-in) hooks into the same MongoDB `IWorkflowScheduler` as before — no manual `CreateBookmark` or `ScheduleAtAsync` needed.
+- All custom bookmark/scheduler plumbing (`CreateBookmark`, `ScheduleAtAsync`, `TryAllocateAsync` callback, `Elsa.Scheduling` import) removed from the activity.
 
-This is ~80 lines of plumbing for a pattern that is conceptually: "try HTTP call; if fail, wait N seconds; retry up to 4 times."
-
-**Recommendation:** Evaluate whether this can be expressed declaratively as a small `Sequence` of Elsa built-in activities (`HttpSend` or a thin `CallAllocationService` activity → `If` → `Delay` → loop). The `Delay` activity already hooks into the durable MongoDB scheduler, so durability is preserved without the manual bookmark/scheduler wiring. This would cut the activity from ~80 lines to a ~10-line workflow fragment.
+Note: `new While(body) { ... }` constructor syntax required to disambiguate Elsa's overloaded `While` constructors.
 
 ---
 
@@ -230,7 +228,7 @@ A single database also enables MongoDB multi-document transactions for true atom
 | 14 | Silent Guid.Empty fallback | Medium | **Fixed** |
 | 15 | In-process HTTP calls inside workflow activities | Medium | By design |
 | 16 | Non-durable retry in preparation outcome activity | Medium | **Fixed** |
-| 17 | AllocateFulfilmentActivity — overly complex manual retry | Medium | **Open** |
+| 17 | AllocateFulfilmentActivity — overly complex manual retry | Medium | **Fixed** |
 | 18 | WaitForPreparationsActivity couples workflow to domain repository | Medium | **Open** |
 | 19 | InitialiseFulfilmentPropertiesActivity — purpose unclear / may be unnecessary | Low | **Open** |
 | 20 | Two MongoDB databases — no transactional boundary | Low | **Open** |
