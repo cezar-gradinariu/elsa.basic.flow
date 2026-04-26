@@ -60,6 +60,16 @@ internal class WaitForPreparationsActivity : Activity
             ? JsonSerializer.Deserialize<List<PreparationContainer>>(containersJson) ?? []
             : [];
 
+        // Increment FIRST — the bookmark is already burned (AutoBurn=true). If the container
+        // POST ran first and threw, the counter would never reach `total` and the workflow
+        // would hang forever. Atomicity guaranteed by MongoDB $inc regardless of concurrency.
+        int completed = 0;
+        if (Guid.TryParse(fulfilmentId, out var fulfilmentGuid))
+        {
+            var repository = context.GetRequiredService<IFulfilmentRepository>();
+            completed = await repository.IncrementPrepCompletedAsync(fulfilmentGuid, context.CancellationToken);
+        }
+
         if (containers.Count > 0 && Guid.TryParse(fulfilmentId, out var fId))
         {
             var config  = context.GetRequiredService<IConfiguration>();
@@ -69,24 +79,21 @@ internal class WaitForPreparationsActivity : Activity
             using var http = factory.CreateClient();
             http.Timeout = TimeSpan.FromSeconds(30);
 
-            var response = await http.PostAsJsonAsync(
-                $"{baseUrl}/api/fulfilments/{fId}/containers",
-                containers,
-                context.CancellationToken);
+            try
+            {
+                var response = await http.PostAsJsonAsync(
+                    $"{baseUrl}/api/fulfilments/{fId}/containers",
+                    containers,
+                    context.CancellationToken);
 
-            response.EnsureSuccessStatusCode();
+                response.EnsureSuccessStatusCode();
 
-            logger.LogInformation("[FulfilmentWorkflow] Applied {Count} container(s) to fulfilment {FulfilmentId}", containers.Count, fId);
-        }
-
-        // Atomically increment the completion counter in MongoDB.
-        // WorkflowExecutionContext.Properties uses full-document replace — concurrent callbacks
-        // would race and lose updates. $inc is server-side atomic regardless of concurrency.
-        int completed = 0;
-        if (Guid.TryParse(fulfilmentId, out var fulfilmentGuid))
-        {
-            var repository = context.GetRequiredService<IFulfilmentRepository>();
-            completed = await repository.IncrementPrepCompletedAsync(fulfilmentGuid, context.CancellationToken);
+                logger.LogInformation("[FulfilmentWorkflow] Applied {Count} container(s) to fulfilment {FulfilmentId}", containers.Count, fId);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "[FulfilmentWorkflow] Failed to apply containers to fulfilment {FulfilmentId} — completion tracking unaffected", fId);
+            }
         }
 
         logger.LogInformation("[FulfilmentWorkflow] Preparation completed ({Completed}/{Total})", completed, total);

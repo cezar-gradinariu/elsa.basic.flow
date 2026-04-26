@@ -61,4 +61,10 @@ public class FulfilmentAggregate
         Containers.AddRange(containers);
         Version++;
     }
+
+    public void Complete()
+    {
+        Status = FulfilmentStatus.Completed;
+        Version++;
+    }
 }

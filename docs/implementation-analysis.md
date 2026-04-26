@@ -208,6 +208,45 @@ A single database also enables MongoDB multi-document transactions for true atom
 
 ---
 
+## Fourth-pass findings (2026-04-26)
+
+### 21. `WaitForPreparationsActivity` — counter increment after failable POST
+
+**Status: FIXED.**
+
+`OnPreparationCompletedAsync` called `EnsureSuccessStatusCode()` on the container POST before calling `IncrementPrepCompletedAsync`. Because `AutoBurn = true`, the bookmark is consumed on entry to the callback. If the POST threw, the `$inc` was never reached, `completed` never reached `total`, and `CompleteActivityAsync` was never called — the workflow hung forever.
+
+**Fix:** Moved `IncrementPrepCompletedAsync` to execute **before** the container POST. Wrapped the POST in `try/catch` so failures are logged as warnings but do not prevent the counter from being incremented or the activity from completing. The container POST is best-effort enrichment; the fan-in gate must not depend on it.
+
+---
+
+### 22. `FulfilmentStatus` never transitions — always shows `Created`
+
+**Status: FIXED.**
+
+`FulfilmentStatus` had only one value (`Created`). `CompleteFulfilmentActivity` only logged and completed; it never updated the aggregate.
+
+**Fix:**
+- Added `Completed` to `FulfilmentStatus`.
+- Added `Complete()` to `FulfilmentAggregate` — sets `Status = FulfilmentStatus.Completed` and increments `Version`.
+- Rewrote `CompleteFulfilmentActivity` to load the aggregate via `IFulfilmentRepository`, call `Complete()`, save it, then complete the activity.
+
+`GET /api/fulfilments/{id}` now returns `"Status": "Completed"` after the workflow finishes.
+
+---
+
+### 23. `SendPrepareCommandsActivity` — no retry on preparation POST
+
+**Status: FIXED.**
+
+A failed `POST /api/preparations` immediately threw via `EnsureSuccessStatusCode()`, which faulted the fulfilment workflow. The preparation workflow for that store never started, so its fan-in bookmark was never registered, and `WaitForPreparationsActivity` would wait forever for a signal that could never arrive.
+
+**Fix:** Added exponential-backoff retry (attempts at 0 s, then 2 s, 4 s, 8 s — 4 attempts total) around each `PostAsJsonAsync` call. After exhausting retries the activity throws `InvalidOperationException`, which faults the fulfilment workflow immediately with a clear message rather than leaving it in a silent deadlock.
+
+> Note: Unlike `AllocateFulfilmentActivity` (which uses the durable `While`+`Delay` pattern), the retry here is in-process and non-durable across restarts. For a more robust solution, the same bookmark+scheduler pattern from #16/#17 could be applied, but the inline retry is a meaningful improvement over no retry.
+
+---
+
 ## Summary
 
 | # | Finding | Severity | Status |
@@ -232,3 +271,6 @@ A single database also enables MongoDB multi-document transactions for true atom
 | 18 | WaitForPreparationsActivity couples workflow to domain repository | Medium | **Open** |
 | 19 | InitialiseFulfilmentPropertiesActivity — purpose unclear / may be unnecessary | Low | **Open** |
 | 20 | Two MongoDB databases — no transactional boundary | Low | **Open** |
+| 21 | WaitForPreparationsActivity — $inc after failable POST → silent deadlock | Critical | **Fixed** |
+| 22 | FulfilmentStatus never transitions beyond Created | High | **Fixed** |
+| 23 | SendPrepareCommandsActivity — no retry on preparation POST | High | **Fixed** |
