@@ -251,6 +251,74 @@ A failed `POST /api/preparations` immediately threw via `EnsureSuccessStatusCode
 
 ---
 
+## Fifth-pass findings (2026-04-26)
+
+### 24. `LogPreparationRequestActivity` — Input lost on restart (same bug as #19)
+
+**Status: OPEN.**
+
+`LogPreparationRequestActivity` is the first activity in `PreparationWorkflow`. It reads `PrepareCommandId`, `StoreId`, and `Lines` from `WorkflowExecutionContext.Input` and outputs them as workflow variables. If the process crashes during this activity, Elsa re-runs it on restart with empty `Input` (verified — see #19). The outputs would be `"(unknown)"` and `"[]"`, causing `CreateAndSendPreparationOutcomeActivity` to build 0 containers and send an outcome with an unknown GUID, silently corrupting the fan-in counter and the aggregate.
+
+**Recommendation:** Apply the same Properties-copy pattern used in `FulfilmentWorkflow`: copy Input values to Properties at the start of `LogPreparationRequestActivity` (or via a dedicated first activity), then read from Properties for the rest of the workflow.
+
+---
+
+### 25. `SchedulerPollingService` — obsolete `ExportWorkflowStateAsync` API
+
+**Status: OPEN.**
+
+`SchedulerPollingService` calls `IWorkflowRuntime.ExportWorkflowStateAsync(instanceId, ct)`, which is marked `[Obsolete]` in Elsa 3.6. The build emits CS0618: *Use the client API instead, retrieved from CreateClientAsync*. Should be replaced with the client-based equivalent.
+
+---
+
+### 26. `PreparationWorkflow` uses `WriteLine` activities — bypasses formatter
+
+**Status: OPEN.**
+
+`new WriteLine("[PreparationWorkflow] Starting delay...")` and `new WriteLine("...Delay completed...")` write directly to `Console.Out`, bypassing `WorkflowConsoleFormatter`. They produce raw unformatted output with no timestamp, no log level badge, and no colour. Should be replaced with `ILogger` calls inside the adjacent activities.
+
+---
+
+### 27. Retry loop in `SendPrepareCommandsActivity` catches `OperationCanceledException`
+
+**Status: OPEN.**
+
+`catch (Exception ex) when (attempt < delays.Length)` catches all exceptions including `OperationCanceledException`. A cancelled workflow would silently retry instead of propagating cancellation immediately. The when-guard should add `&& ex is not OperationCanceledException`.
+
+---
+
+### 28. `SendPrepareCommandsActivity` — `if (!sent) throw` was dead code
+
+**Status: FIXED.**
+
+The `var sent = false` flag and `if (!sent) throw new InvalidOperationException(...)` below the retry loop were never reached. When the last attempt fails, the `when (attempt < delays.Length)` guard is false so the exception propagates out of the method before the check. Removed the flag and the dead throw; last-attempt exceptions now propagate naturally.
+
+---
+
+### 29. `ElsaPreparationOutcomeHandler` — hardcoded `"Elsa.Event"` string literal
+
+**Status: FIXED.**
+
+`stimulusSender.SendAsync("Elsa.Event", ...)` used a raw string literal. `WaitForPreparationsActivity` uses `RuntimeStimulusNames.Event` for the matching bookmark name. Replaced the literal with `RuntimeStimulusNames.Event` so both sides track the same constant.
+
+---
+
+### 30. Emoji in log line
+
+**Status: FIXED.**
+
+`CreateAndSendPreparationOutcomeActivity` logged container details with a `📦` emoji. Removed per project rules (no emojis unless explicitly requested).
+
+---
+
+### 31. `AllocateFulfilmentActivity` — dictionary indexer instead of `TryGetValue`
+
+**Status: FIXED.**
+
+`props[key]?.ToString()` throws `KeyNotFoundException` if a key is absent. Replaced all four Properties reads with `TryGetValue` with safe fallbacks, consistent with the rest of the codebase.
+
+---
+
 ## Summary
 
 | # | Finding | Severity | Status |
@@ -278,3 +346,11 @@ A failed `POST /api/preparations` immediately threw via `EnsureSuccessStatusCode
 | 21 | WaitForPreparationsActivity — $inc after failable POST → silent deadlock | Critical | **Fixed** |
 | 22 | FulfilmentStatus never transitions beyond Created | High | **Fixed** |
 | 23 | SendPrepareCommandsActivity — no retry on preparation POST | High | **Fixed** |
+| 24 | PreparationWorkflow — Input lost on restart (LogPreparationRequestActivity) | High | **Open** |
+| 25 | ExportWorkflowStateAsync obsolete API (CS0618 warning) | Medium | **Open** |
+| 26 | PreparationWorkflow uses WriteLine — bypasses formatter | Medium | **Open** |
+| 27 | Retry loop catches OperationCanceledException | Medium | **Open** |
+| 28 | `if (!sent) throw` dead code in SendPrepareCommandsActivity | Low | **Fixed** |
+| 29 | `"Elsa.Event"` string literal instead of RuntimeStimulusNames.Event | Low | **Fixed** |
+| 30 | Emoji in log line | Low | **Fixed** |
+| 31 | Dictionary indexer instead of TryGetValue in AllocateFulfilmentActivity | Low | **Fixed** |

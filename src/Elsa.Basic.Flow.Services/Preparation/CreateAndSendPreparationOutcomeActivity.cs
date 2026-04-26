@@ -140,6 +140,6 @@ internal class CreateAndSendPreparationOutcomeActivity : Activity
     {
         logger.LogInformation("[PreparationWorkflow] Outcome for {Id} ({Count} container(s))", id, containers.Count);
         foreach (var c in containers)
-            logger.LogInformation("  📦 {ContainerId} ({ContainerType})  lines={Lines}", c.ContainerId, c.ContainerType, c.AllocatedLines.Count);
+            logger.LogInformation("  {ContainerId} ({ContainerType})  lines={Lines}", c.ContainerId, c.ContainerType, c.AllocatedLines.Count);
     }
 }

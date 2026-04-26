@@ -23,7 +23,7 @@ public class ElsaPreparationOutcomeHandler(
                 c.ContainerId, c.ContainerType, c.AllocatedLines.Count);
 
         await stimulusSender.SendAsync(
-            "Elsa.Event",
+            RuntimeStimulusNames.Event,
             new EventStimulus($"preparation-completed-{payload.Id}"),
             new StimulusMetadata
             {

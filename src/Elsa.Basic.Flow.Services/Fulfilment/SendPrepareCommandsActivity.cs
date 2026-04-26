@@ -44,7 +44,6 @@ internal class SendPrepareCommandsActivity : Activity
             };
 
             var delays = new[] { 2, 4, 8 };
-            var sent   = false;
 
             for (var attempt = 0; attempt <= delays.Length; attempt++)
             {
@@ -52,7 +51,6 @@ internal class SendPrepareCommandsActivity : Activity
                 {
                     var response = await http.PostAsJsonAsync($"{baseUrl}/api/preparations", request, context.CancellationToken);
                     response.EnsureSuccessStatusCode();
-                    sent = true;
                     break;
                 }
                 catch (Exception ex) when (attempt < delays.Length)
@@ -61,9 +59,6 @@ internal class SendPrepareCommandsActivity : Activity
                     await Task.Delay(TimeSpan.FromSeconds(delays[attempt]), context.CancellationToken);
                 }
             }
-
-            if (!sent)
-                throw new InvalidOperationException($"Failed to dispatch PrepareCommand {cmd.Id} after {delays.Length + 1} attempts — faulting workflow");
 
             logger.LogInformation("  → PrepareCommand id={Id}  storeId={StoreId}  lines={Lines} dispatched", cmd.Id, cmd.StoreId, cmd.Lines.Count);
         }

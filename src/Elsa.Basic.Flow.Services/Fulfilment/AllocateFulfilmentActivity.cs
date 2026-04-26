@@ -24,10 +24,15 @@ internal class AllocateFulfilmentActivity : Activity
         var props      = context.WorkflowExecutionContext.Properties;
         var retryCount = props.TryGetValue(RetryCountKey, out var r) ? Convert.ToInt32(r) : 0;
 
-        var fulfilmentId = props[InitialiseFulfilmentPropertiesActivity.FulfilmentIdKey]?.ToString() ?? "unknown";
-        var orderNo      = props[InitialiseFulfilmentPropertiesActivity.OrderNoKey]?.ToString()      ?? string.Empty;
-        var storeId      = props[InitialiseFulfilmentPropertiesActivity.StoreIdKey]?.ToString()      ?? string.Empty;
-        var orderLines   = JsonSerializer.Deserialize<List<OrderLine>>(props[InitialiseFulfilmentPropertiesActivity.OrderLinesKey]?.ToString() ?? "[]") ?? [];
+        props.TryGetValue(InitialiseFulfilmentPropertiesActivity.FulfilmentIdKey, out var fidRaw);
+        props.TryGetValue(InitialiseFulfilmentPropertiesActivity.OrderNoKey,      out var onoRaw);
+        props.TryGetValue(InitialiseFulfilmentPropertiesActivity.StoreIdKey,      out var sidRaw);
+        props.TryGetValue(InitialiseFulfilmentPropertiesActivity.OrderLinesKey,   out var olRaw);
+
+        var fulfilmentId = fidRaw?.ToString() ?? "unknown";
+        var orderNo      = onoRaw?.ToString() ?? string.Empty;
+        var storeId      = sidRaw?.ToString() ?? string.Empty;
+        var orderLines   = JsonSerializer.Deserialize<List<OrderLine>>(olRaw?.ToString() ?? "[]") ?? [];
 
         var config  = context.GetRequiredService<IConfiguration>();
         var factory = context.GetRequiredService<IHttpClientFactory>();
