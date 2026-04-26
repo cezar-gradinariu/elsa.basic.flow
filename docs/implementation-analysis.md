@@ -255,11 +255,11 @@ A failed `POST /api/preparations` immediately threw via `EnsureSuccessStatusCode
 
 ### 24. `LogPreparationRequestActivity` — Input lost on restart (same bug as #19)
 
-**Status: OPEN.**
+**Status: FIXED.**
 
 `LogPreparationRequestActivity` is the first activity in `PreparationWorkflow`. It reads `PrepareCommandId`, `StoreId`, and `Lines` from `WorkflowExecutionContext.Input` and outputs them as workflow variables. If the process crashes during this activity, Elsa re-runs it on restart with empty `Input` (verified — see #19). The outputs would be `"(unknown)"` and `"[]"`, causing `CreateAndSendPreparationOutcomeActivity` to build 0 containers and send an outcome with an unknown GUID, silently corrupting the fan-in counter and the aggregate.
 
-**Recommendation:** Apply the same Properties-copy pattern used in `FulfilmentWorkflow`: copy Input values to Properties at the start of `LogPreparationRequestActivity` (or via a dedicated first activity), then read from Properties for the rest of the workflow.
+**Fix:** Applied the same Properties-copy pattern as `InitialiseFulfilmentPropertiesActivity`. `LogPreparationRequestActivity` now copies `PrepareCommandId`, `StoreId`, and `Lines` into `WorkflowExecutionContext.Properties` (under keys `_prep_command_id`, `_prep_store_id`, `_prep_lines_json`) before setting its outputs. Properties survive restarts; the workflow variables set as outputs are committed after this activity completes and are available to all downstream activities.
 
 ---
 
@@ -346,7 +346,7 @@ The `var sent = false` flag and `if (!sent) throw new InvalidOperationException(
 | 21 | WaitForPreparationsActivity — $inc after failable POST → silent deadlock | Critical | **Fixed** |
 | 22 | FulfilmentStatus never transitions beyond Created | High | **Fixed** |
 | 23 | SendPrepareCommandsActivity — no retry on preparation POST | High | **Fixed** |
-| 24 | PreparationWorkflow — Input lost on restart (LogPreparationRequestActivity) | High | **Open** |
+| 24 | PreparationWorkflow — Input lost on restart (LogPreparationRequestActivity) | High | **Fixed** |
 | 25 | ExportWorkflowStateAsync obsolete API (CS0618 warning) | Medium | **Open** |
 | 26 | PreparationWorkflow uses WriteLine — bypasses formatter | Medium | **Open** |
 | 27 | Retry loop catches OperationCanceledException | Medium | **Open** |

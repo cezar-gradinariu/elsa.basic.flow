@@ -8,12 +8,19 @@ namespace Elsa.Basic.Flow.Services.Preparation;
 
 internal class LogPreparationRequestActivity : Activity
 {
+    // Input is empty on restart (Elsa 3.6 verified behaviour).
+    // Copying to Properties here ensures values survive process crashes.
+    internal const string PrepareCommandIdKey = "_prep_command_id";
+    internal const string StoreIdKey          = "_prep_store_id";
+    internal const string LinesJsonKey        = "_prep_lines_json";
+
     public Output<string>?   PrepareCommandIdOut { get; set; }
     public Output<string>?   LinesJsonOut        { get; set; }
     public Output<TimeSpan>? DelayOut            { get; set; }
 
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
+        var props = context.WorkflowExecutionContext.Properties;
         var input = context.WorkflowExecutionContext.Input;
 
         object? idVal = null, storeIdVal = null, linesVal = null;
@@ -21,12 +28,15 @@ internal class LogPreparationRequestActivity : Activity
         input?.TryGetValue("StoreId",          out storeIdVal);
         input?.TryGetValue("Lines",            out linesVal);
 
-        var id      = idVal?.ToString()      ?? "(unknown)";
-        var storeId = storeIdVal?.ToString() ?? "(unknown)";
+        var id        = idVal?.ToString()      ?? "(unknown)";
+        var storeId   = storeIdVal?.ToString() ?? "(unknown)";
+        var linesJson = linesVal?.ToString()   ?? "[]";
 
-        var linesJson = linesVal?.ToString() ?? "[]";
-        var lines     = JsonSerializer.Deserialize<List<OrderLine>>(linesJson) ?? [];
+        props[PrepareCommandIdKey] = id;
+        props[StoreIdKey]          = storeId;
+        props[LinesJsonKey]        = linesJson;
 
+        var lines         = JsonSerializer.Deserialize<List<OrderLine>>(linesJson) ?? [];
         var randomSeconds = Random.Shared.Next(5, 31);
         var delay         = TimeSpan.FromSeconds(randomSeconds);
 
