@@ -1,4 +1,5 @@
 using Elsa.Basic.Flow.Api;
+using Microsoft.Extensions.Logging.Console;
 using Elsa.Basic.Flow.Domain;
 using Elsa.Basic.Flow.Infrastructure;
 using Elsa.Basic.Flow.Services.Allocation;
@@ -13,6 +14,11 @@ using MongoDB.Driver;
 BsonSerializer.RegisterSerializer(new GuidSerializer(GuidRepresentation.Standard));
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Logging
+    .ClearProviders()
+    .AddConsoleFormatter<WorkflowConsoleFormatter, ConsoleFormatterOptions>()
+    .AddConsole(opts => opts.FormatterName = WorkflowConsoleFormatter.FormatterName);
 
 // ── MongoDB (domain) ──────────────────────────────────────────────────────────
 var mongoSettings = builder.Configuration.GetSection("MongoDB");
