@@ -195,7 +195,9 @@ Also confirmed: Elsa has a built-in "Restarting interrupted workflows" mechanism
 
 ### 20. Two MongoDB databases — no transactional boundary between domain and Elsa state
 
-**Status: OPEN.**
+**Status: FIXED.**
+
+`ElsaMongo` connection string updated to use `fms` (same database as the domain). Elsa's collections (`workflow_instances`, `workflow_definitions`, `elsa_scheduled_tasks`, etc.) now coexist with domain collections (`fulfilments`) in a single database, enabling MongoDB multi-document transactions across the boundary if needed.
 
 `CreateFulfilmentHandler` writes the domain aggregate to `fms.fulfilments`, then creates the Elsa workflow instance in `fms-workflows`. These are separate MongoDB databases; MongoDB multi-document transactions do not span databases.
 
@@ -272,7 +274,7 @@ A failed `POST /api/preparations` immediately threw via `EnsureSuccessStatusCode
 | 17 | AllocateFulfilmentActivity — overly complex manual retry | Medium | **Fixed** |
 | 18 | WaitForPreparationsActivity couples workflow to domain repository | Medium | **Open** |
 | 19 | InitialiseFulfilmentPropertiesActivity — purpose unclear / may be unnecessary | Low | Verified necessary — Input lost on restart |
-| 20 | Two MongoDB databases — no transactional boundary | Low | **Open** |
+| 20 | Two MongoDB databases — no transactional boundary | Low | **Fixed** — Elsa now uses `fms` database |
 | 21 | WaitForPreparationsActivity — $inc after failable POST → silent deadlock | Critical | **Fixed** |
 | 22 | FulfilmentStatus never transitions beyond Created | High | **Fixed** |
 | 23 | SendPrepareCommandsActivity — no retry on preparation POST | High | **Fixed** |
