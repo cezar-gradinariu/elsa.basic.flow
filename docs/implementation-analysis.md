@@ -1,6 +1,6 @@
 # Implementation Analysis Report
 
-Last updated: 2026-04-17. Analysis of the Elsa.Basic.Flow solution against Elsa 3.6 best practices.
+Last updated: 2026-04-26. Analysis of the Elsa.Basic.Flow solution against Elsa 3.6 best practices.
 
 ---
 
@@ -46,7 +46,9 @@ The tracker maintained a separate `prep_tracking` MongoDB collection. Problems:
 - Race condition: preparation outcome could arrive before its bookmark was created → workflow hung forever
 - Cleanup was not atomic; crash between signal and cleanup left orphaned tracker docs
 
-**Replacement:** `WaitForPreparationsActivity` creates **N bookmarks** — one per preparation, each listening for `preparation-completed-{preparationId}`. Each callback increments a counter stored in `WorkflowExecutionContext.Properties` (persisted with the workflow instance by Elsa). The activity completes when the counter reaches N. No external collection; no external fan-in logic.
+**Replacement:** `WaitForPreparationsActivity` creates **N bookmarks** — one per preparation, each listening for `preparation-completed-{preparationId}`. Each callback atomically increments a counter in the **`fulfilments` MongoDB collection** via `repository.IncrementPrepCompletedAsync()` (MongoDB `$inc` operator, `FindOneAndUpdate` returning the updated document). The activity completes when the returned count equals the total. No external collection; no external fan-in logic.
+
+> **Note:** The counter lives in the domain repository, not in `WorkflowExecutionContext.Properties`. This is intentional for atomicity — MongoDB `$inc` is race-safe under concurrent bookmark callbacks; a Properties-based read-modify-write would not be.
 
 The `/api/preparation-outcome` endpoint sends a per-preparation stimulus (`preparation-completed-{id}`) targeting the fulfilment workflow instance directly by its Elsa instance ID (threaded through via `PrepareCommand.ParentWorkflowInstanceId`).
 
@@ -64,7 +66,9 @@ The `/api/preparation-outcome` endpoint sends a per-preparation stimulus (`prepa
 
 ### 5. No HTTP retry in `CreateAndSendPreparationOutcomeActivity`
 
-**Status: FIXED.** Added exponential-backoff retry (up to 4 attempts: 2 s, 4 s, 8 s). After exhausting retries the activity throws, faulting the preparation workflow — visible in Elsa's `/elsa/api/workflow-instances`.
+**Status: FIXED (partially).** Added exponential-backoff retry (up to 4 attempts: 2 s, 4 s, 8 s) via a `for` loop with `await Task.Delay(…)`. After exhausting retries the activity throws, faulting the preparation workflow — visible in Elsa's `/elsa/api/workflow-instances`.
+
+> **Resolved via #16:** Retry was subsequently replaced with the same durable bookmark + `IWorkflowScheduler` pattern used in `AllocateFulfilmentActivity`.
 
 ### 6. `SendPrepareCommandsActivity` serializes `OrderLines` to a JSON string
 
@@ -123,6 +127,89 @@ Elsa deserializes workflow input values back to their original CLR types when a 
 
 ---
 
+---
+
+## Third-pass findings (2026-04-26)
+
+### 15. In-process HTTP calls inside workflow activities
+
+**Status: BY DESIGN.**
+
+`AllocateFulfilmentActivity` and `SendPrepareCommandsActivity` call the local API over HTTP rather than invoking handlers directly. This is intentional — the design treats each API endpoint as a logical service boundary, even when co-hosted in the same process. Not a defect.
+
+---
+
+### 16. Non-durable retry in `CreateAndSendPreparationOutcomeActivity`
+
+**Status: FIXED.**
+
+Replaced the inline `for`-loop + `await Task.Delay(…)` with the same durable bookmark + `IWorkflowScheduler` pattern used in `AllocateFulfilmentActivity`:
+
+- `ExecuteAsync` seeds `PrepareCommandId`, `LinesJson`, and the built `ContainersJson` into `WorkflowExecutionContext.Properties`, then calls `TrySendOutcomeAsync`.
+- `TrySendOutcomeAsync` reads from Properties, attempts the HTTP POST, and on failure increments a retry counter, creates a durable bookmark, and schedules a MongoDB-backed `ScheduleExistingWorkflowInstanceRequest` via `IWorkflowScheduler`.
+- The `SchedulerPollingService` fires the bookmark on restart, re-entering `TrySendOutcomeAsync` from Properties — survives process crash mid-retry.
+- Containers are built once in `ExecuteAsync` and serialized to Properties so the same payload is sent on every retry (idempotent).
+
+---
+
+### 17. `AllocateFulfilmentActivity` — overly complex manual retry pattern
+
+**Status: OPEN.**
+
+The durable retry in `AllocateFulfilmentActivity` is correct but hand-rolled at a low level:
+
+- Manually calls `context.CreateBookmark(…)` to suspend.
+- Manually calls `scheduler.ScheduleAtAsync(…)` to re-trigger the bookmark.
+- Manually tracks `AttemptCount` in `WorkflowExecutionContext.Properties`.
+- Manually wires a `TryAllocateAsync` callback that re-runs the HTTP call and reschedules if needed.
+
+This is ~80 lines of plumbing for a pattern that is conceptually: "try HTTP call; if fail, wait N seconds; retry up to 4 times."
+
+**Recommendation:** Evaluate whether this can be expressed declaratively as a small `Sequence` of Elsa built-in activities (`HttpSend` or a thin `CallAllocationService` activity → `If` → `Delay` → loop). The `Delay` activity already hooks into the durable MongoDB scheduler, so durability is preserved without the manual bookmark/scheduler wiring. This would cut the activity from ~80 lines to a ~10-line workflow fragment.
+
+---
+
+### 18. `WaitForPreparationsActivity` couples workflow to domain repository
+
+**Status: OPEN.**
+
+The activity directly injects `IFulfilmentRepository` and calls `IncrementPrepCompletedAsync` to atomically track fan-in progress. This means the workflow activity has a hard dependency on the domain persistence layer.
+
+**Concern:** The completion counter now lives in the `fulfilments` domain collection, not in Elsa's workflow state. This splits the "source of truth" for workflow progress across two stores — Elsa's `workflow_instances` and the domain `fulfilments` collection.
+
+**Recommendation:** Keep the `$inc` atomicity (it's correct), but consider whether the counter belongs in a workflow-scoped document inside Elsa's own persistence (e.g., stored in `WorkflowExecutionContext.Properties` with conflict detection) or whether the domain aggregate is genuinely the right owner. If the former, Elsa's `Properties` survive restarts because they're serialized with the workflow instance — you'd need a different atomicity strategy (e.g., optimistic retry on the workflow dispatcher level).
+
+---
+
+### 19. `InitialiseFulfilmentPropertiesActivity` — purpose is unclear from code
+
+**Status: OPEN.**
+
+This activity exists solely to copy four values from `WorkflowExecutionContext.Input` into `WorkflowExecutionContext.Properties` before any other activity runs. The reason is durability: with `ExecutingActivityStrategy`, Input is committed before execution, but the code comment implies concern that Input could be lost on resume.
+
+**Concern:** `ExecutingActivityStrategy` commits state (including Input) before each activity executes. The need for this extra first activity is not fully justified by Elsa's documented semantics, and it adds noise to the workflow definition.
+
+**Recommendation:** Verify whether Elsa 3.6 with `ExecutingActivityStrategy` preserves Input across restarts without the copy. If it does, remove the activity and read from Input directly in the downstream activities. If Input is genuinely lost on resume (Elsa bug or design quirk), document this explicitly as a known Elsa limitation so future maintainers understand why the activity exists.
+
+---
+
+### 20. Two MongoDB databases — no transactional boundary between domain and Elsa state
+
+**Status: OPEN.**
+
+`CreateFulfilmentHandler` writes the domain aggregate to `fms.fulfilments`, then creates the Elsa workflow instance in `fms-workflows`. These are separate MongoDB databases; MongoDB multi-document transactions do not span databases.
+
+If the workflow creation step fails after the aggregate is persisted, the aggregate is orphaned (exists in `fms` with no corresponding workflow). There is no compensating action.
+
+**Recommendation:** Either:
+
+- Consolidate Elsa and domain state into a single MongoDB database (simplest — no code change beyond connection strings, since both use the same MongoDB instance).
+- Or accept the orphan risk and add a reconciliation job that detects aggregates with no corresponding workflow instance.
+
+A single database also enables MongoDB multi-document transactions for true atomicity across aggregate creation and workflow dispatch.
+
+---
+
 ## Summary
 
 | # | Finding | Severity | Status |
@@ -131,7 +218,7 @@ Elsa deserializes workflow input values back to their original CLR types when a 
 | 2 | Custom tracker — per-preparation bookmarks | Critical | **Fixed** |
 | 3 | Raw input dict extraction in activities | Medium | Partial |
 | 4 | Race condition in WaitForPreparationsActivity | Medium | **Fixed** (via #2) |
-| 5 | No HTTP retry in preparation outcome activity | Medium | **Fixed** |
+| 5 | No HTTP retry in preparation outcome activity | Medium | Fixed with inline retry — non-durable (see #16) |
 | 6 | OrderLines pre-serialized as JSON string | Medium | Not fixed — required by Elsa's persistence behaviour |
 | 7 | Console.WriteLine instead of ILogger | Low | **Fixed** |
 | 8 | InMemoryPreparationCompletionTracker dead code | Low | **Fixed** (removed) |
@@ -141,3 +228,9 @@ Elsa deserializes workflow input values back to their original CLR types when a 
 | 12 | Unsafe `Enum.Parse` on schema drift | Medium | **Fixed** |
 | 13 | KeyNotFoundException in bookmark callback | Medium | **Fixed** |
 | 14 | Silent Guid.Empty fallback | Medium | **Fixed** |
+| 15 | In-process HTTP calls inside workflow activities | Medium | By design |
+| 16 | Non-durable retry in preparation outcome activity | Medium | **Fixed** |
+| 17 | AllocateFulfilmentActivity — overly complex manual retry | Medium | **Open** |
+| 18 | WaitForPreparationsActivity couples workflow to domain repository | Medium | **Open** |
+| 19 | InitialiseFulfilmentPropertiesActivity — purpose unclear / may be unnecessary | Low | **Open** |
+| 20 | Two MongoDB databases — no transactional boundary | Low | **Open** |
