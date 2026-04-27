@@ -41,7 +41,7 @@ internal class CreateAndSendPreparationOutcomeActivity : DurableRetryActivity
 
         var config  = context.GetRequiredService<IConfiguration>();
         var factory = context.GetRequiredService<IHttpClientFactory>();
-        var baseUrl = config["Api:BaseUrl"] ?? "http://localhost:5000";
+        var baseUrl = config["Api:BaseUrl"] ?? throw new InvalidOperationException("Api:BaseUrl is not configured.");
 
         using var http = factory.CreateClient();
         http.Timeout = TimeSpan.FromSeconds(30);

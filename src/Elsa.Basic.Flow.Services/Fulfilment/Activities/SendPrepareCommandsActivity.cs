@@ -22,7 +22,7 @@ internal class SendPrepareCommandsActivity : Activity
         var logger       = context.GetRequiredService<ILogger<SendPrepareCommandsActivity>>();
         var config       = context.GetRequiredService<IConfiguration>();
         var factory      = context.GetRequiredService<IHttpClientFactory>();
-        var baseUrl      = config["Api:BaseUrl"] ?? "http://localhost:5000";
+        var baseUrl      = config["Api:BaseUrl"] ?? throw new InvalidOperationException("Api:BaseUrl is not configured.");
 
         var commands = result.StoreAllocations
             .Select(a => new PrepareCommand(Guid.NewGuid(), a.StoreId, a.Lines))

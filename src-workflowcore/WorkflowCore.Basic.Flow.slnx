@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WorkflowCore.Basic.Flow.Api/WorkflowCore.Basic.Flow.Api.csproj" />
+    <Project Path="src/WorkflowCore.Basic.Flow.Domain/WorkflowCore.Basic.Flow.Domain.csproj" />
+    <Project Path="src/WorkflowCore.Basic.Flow.Infrastructure/WorkflowCore.Basic.Flow.Infrastructure.csproj" />
+    <Project Path="src/WorkflowCore.Basic.Flow.Services/WorkflowCore.Basic.Flow.Services.csproj" />
+  </Folder>
+</Solution>
