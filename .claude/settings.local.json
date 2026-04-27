@@ -28,7 +28,12 @@
       "Bash(mkdir -p \"C:/Users/1230075/AppData/Local/Temp/ElsaReflect\")",
       "WebFetch(domain:workflow-core.readthedocs.io)",
       "WebSearch",
-      "Bash(echo \"EXIT:$?\")"
+      "Bash(echo \"EXIT:$?\")",
+      "WebFetch(domain:www.nuget.org)",
+      "Read(//c/Users/cezar/.nuget/packages/elsa.workflows.core/**)",
+      "Read(//c/Users/cezar/.nuget/**)",
+      "Bash(unzip -p /c/Users/cezar/.nuget/packages/elsa.workflows.core/3.6.0/elsa.workflows.core.3.6.0.nupkg \"lib/net10.0/Elsa.Workflows.Core.dll\")",
+      "Read(//tmp/**)"
     ],
     "additionalDirectories": [
       "c:\\Users\\cezar\\elsa.basic.flow\\src\\Elsa.Basic.Flow.Services\\Preparation"
