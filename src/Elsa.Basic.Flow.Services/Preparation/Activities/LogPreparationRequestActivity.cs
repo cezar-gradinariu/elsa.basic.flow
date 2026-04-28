@@ -1,10 +1,10 @@
 using System.Text.Json;
 using Elsa.Basic.Flow.Domain;
-using Microsoft.Extensions.Logging;
 using Elsa.Workflows;
 using Elsa.Workflows.Models;
+using Microsoft.Extensions.Logging;
 
-namespace Elsa.Basic.Flow.Services.Preparation;
+namespace Elsa.Basic.Flow.Services.Preparation.Activities;
 
 internal class LogPreparationRequestActivity : Activity
 {

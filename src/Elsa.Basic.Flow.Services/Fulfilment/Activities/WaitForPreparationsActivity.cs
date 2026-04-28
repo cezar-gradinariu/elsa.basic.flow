@@ -1,7 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using Elsa.Basic.Flow.Domain;
-using Elsa.Basic.Flow.Services.Preparation;
+using Elsa.Basic.Flow.Services.Preparation.Commands;
 using Elsa.Workflows;
 using Elsa.Workflows.Models;
 using Elsa.Workflows.Runtime;
@@ -9,7 +9,7 @@ using Elsa.Workflows.Runtime.Stimuli;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
-namespace Elsa.Basic.Flow.Services.Fulfilment;
+namespace Elsa.Basic.Flow.Services.Fulfilment.Activities;
 
 internal class WaitForPreparationsActivity : Activity
 {

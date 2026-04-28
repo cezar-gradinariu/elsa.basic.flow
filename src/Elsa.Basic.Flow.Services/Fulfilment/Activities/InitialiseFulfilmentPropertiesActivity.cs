@@ -1,6 +1,6 @@
 using Elsa.Workflows;
 
-namespace Elsa.Basic.Flow.Services.Fulfilment;
+namespace Elsa.Basic.Flow.Services.Fulfilment.Activities;
 
 /// <summary>
 /// First activity in FulfilmentWorkflow. Copies workflow Input values into

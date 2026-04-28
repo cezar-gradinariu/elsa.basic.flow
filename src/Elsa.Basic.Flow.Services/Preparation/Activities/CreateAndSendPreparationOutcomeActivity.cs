@@ -1,3 +1,4 @@
+using System.Data;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Elsa.Basic.Flow.Domain;
@@ -7,7 +8,7 @@ using Elsa.Workflows.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
-namespace Elsa.Basic.Flow.Services.Preparation;
+namespace Elsa.Basic.Flow.Services.Preparation.Activities;
 
 internal class CreateAndSendPreparationOutcomeActivity : DurableRetryActivity
 {

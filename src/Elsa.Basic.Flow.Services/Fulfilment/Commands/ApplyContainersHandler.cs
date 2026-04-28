@@ -1,7 +1,7 @@
 using Elsa.Basic.Flow.Domain;
 using Microsoft.Extensions.Logging;
 
-namespace Elsa.Basic.Flow.Services.Fulfilment;
+namespace Elsa.Basic.Flow.Services.Fulfilment.Commands;
 
 public class ApplyContainersHandler(
     IFulfilmentRepository             repository,

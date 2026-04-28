@@ -1,9 +1,10 @@
+using Elsa.Basic.Flow.Services.Preparation.Activities;
+using Elsa.Scheduling.Activities;
 using Elsa.Workflows;
 using Elsa.Workflows.Activities;
 using Elsa.Workflows.Models;
-using Elsa.Scheduling.Activities;
 
-namespace Elsa.Basic.Flow.Services.Preparation;
+namespace Elsa.Basic.Flow.Services.Preparation.Workflows;
 
 public class PreparationWorkflow : WorkflowBase
 {

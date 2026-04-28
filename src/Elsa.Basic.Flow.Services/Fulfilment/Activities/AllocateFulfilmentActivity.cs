@@ -7,7 +7,7 @@ using Elsa.Workflows;
 using Elsa.Workflows.Models;
 using Microsoft.Extensions.Configuration;
 
-namespace Elsa.Basic.Flow.Services.Fulfilment;
+namespace Elsa.Basic.Flow.Services.Fulfilment.Activities;
 
 internal class AllocateFulfilmentActivity : DurableRetryActivity
 {

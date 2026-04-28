@@ -1,10 +1,11 @@
 using Elsa.Basic.Flow.Services.Allocation;
-using Elsa.Basic.Flow.Services.Preparation;
+using Elsa.Basic.Flow.Services.Fulfilment.Activities;
+using Elsa.Basic.Flow.Services.Preparation.Commands;
 using Elsa.Workflows;
 using Elsa.Workflows.Activities;
 using Elsa.Workflows.Models;
 
-namespace Elsa.Basic.Flow.Services.Fulfilment;
+namespace Elsa.Basic.Flow.Services.Fulfilment.Workflows;
 
 public class FulfilmentWorkflow : WorkflowBase
 {

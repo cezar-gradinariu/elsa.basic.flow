@@ -1,13 +1,12 @@
 using System.Net.Http.Json;
-using System.Text.Json;
 using Elsa.Basic.Flow.Services.Allocation;
-using Elsa.Basic.Flow.Services.Preparation;
+using Elsa.Basic.Flow.Services.Preparation.Commands;
 using Elsa.Workflows;
 using Elsa.Workflows.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
-namespace Elsa.Basic.Flow.Services.Fulfilment;
+namespace Elsa.Basic.Flow.Services.Fulfilment.Activities;
 
 internal class SendPrepareCommandsActivity : Activity
 {

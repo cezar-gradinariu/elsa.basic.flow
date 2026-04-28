@@ -1,12 +1,13 @@
 using System.Text.Json;
 using Elsa.Basic.Flow.Domain;
+using Elsa.Basic.Flow.Services.Fulfilment.Workflows;
 using Elsa.Workflows.Models;
 using Elsa.Workflows.Runtime;
 using Elsa.Workflows.Runtime.Contracts;
 using Elsa.Workflows.Runtime.Messages;
 using Elsa.Workflows.Runtime.Requests;
 
-namespace Elsa.Basic.Flow.Services.Fulfilment;
+namespace Elsa.Basic.Flow.Services.Fulfilment.Commands;
 
 public class CreateFulfilmentHandler(
     IFulfilmentRepository repository,
