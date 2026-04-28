@@ -1,6 +1,5 @@
 using Elsa.Basic.Flow.Services.Allocation;
 using Elsa.Basic.Flow.Services.Fulfilment.Activities;
-using Elsa.Basic.Flow.Services.Preparation.Commands;
 using Elsa.Workflows;
 using Elsa.Workflows.Activities;
 using Elsa.Workflows.Models;
@@ -13,7 +12,6 @@ public class FulfilmentWorkflow : WorkflowBase
     {
         var fulfilmentId     = builder.WithVariable<string>();
         var allocationResult = builder.WithVariable<AllocationResult>();
-        var prepareCommands  = builder.WithVariable<List<PrepareCommand>>();
 
         builder.Root = new Sequence
         {
@@ -25,16 +23,10 @@ public class FulfilmentWorkflow : WorkflowBase
                     FulfilmentId = new Output<string>(fulfilmentId),
                     Result       = new Output<AllocationResult>(allocationResult)
                 },
-                new SendPrepareCommandsActivity
+                new DispatchAndWaitPreparationsActivity
                 {
                     AllocationResult = new Input<AllocationResult>(allocationResult),
-                    FulfilmentId     = new Input<string>(fulfilmentId),
-                    PrepareCommands  = new Output<List<PrepareCommand>>(prepareCommands)
-                },
-                new WaitForPreparationsActivity
-                {
-                    PrepareCommands = new Input<List<PrepareCommand>>(prepareCommands),
-                    FulfilmentId    = new Input<string>(fulfilmentId)
+                    FulfilmentId     = new Input<string>(fulfilmentId)
                 },
                 new CompleteFulfilmentActivity
                 {

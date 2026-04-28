@@ -33,7 +33,10 @@
       "Read(//c/Users/cezar/.nuget/packages/elsa.workflows.core/**)",
       "Read(//c/Users/cezar/.nuget/**)",
       "Bash(unzip -p /c/Users/cezar/.nuget/packages/elsa.workflows.core/3.6.0/elsa.workflows.core.3.6.0.nupkg \"lib/net10.0/Elsa.Workflows.Core.dll\")",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(xargs '-I{}' powershell -Command ' *)",
+      "Bash(cp \"/c/Users/1230075/.nuget/packages/elsa.workflows.core/3.6.1/elsa.workflows.core.3.6.1.nupkg\" elsa.zip)",
+      "Bash(unzip -l elsa.zip)"
     ],
     "additionalDirectories": [
       "c:\\Users\\cezar\\elsa.basic.flow\\src\\Elsa.Basic.Flow.Services\\Preparation"

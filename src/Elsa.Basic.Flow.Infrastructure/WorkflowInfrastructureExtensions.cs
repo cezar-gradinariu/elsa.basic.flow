@@ -1,5 +1,4 @@
 using Elsa.Basic.Flow.Infrastructure.Preparation;
-using Elsa.Basic.Flow.Services.Fulfilment;
 using Elsa.Basic.Flow.Services.Fulfilment.Workflows;
 using Elsa.Basic.Flow.Services.Preparation;
 using Elsa.Basic.Flow.Services.Preparation.Workflows;
@@ -55,6 +54,7 @@ public static class WorkflowInfrastructureExtensions
             elsa.Configure<WorkflowsFeature>(w => w.WithDefaultActivityCommitStrategy(new ExecutingActivityStrategy()));
             elsa.AddWorkflow<FulfilmentWorkflow>();
             elsa.AddWorkflow<PreparationWorkflow>();
+            elsa.AddWorkflow<StorePreparationSubWorkflow>();
         });
 
         return services;
