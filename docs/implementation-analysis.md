@@ -439,6 +439,131 @@ The paragraph immediately below the "Fixed" status for #20 still reads:
 
 ---
 
+## Seventh-pass findings (2026-04-28 — post-subworkflow redesign)
+
+The previous passes analysed a flat fulfilment workflow with `SendPrepareCommandsActivity` + `WaitForPreparationsActivity`. The architecture was replaced with a parent/child subworkflow fan-out model (`DispatchAndWaitPreparationsActivity` + `StorePreparationSubWorkflow`). Several earlier open findings became obsolete; new findings emerged from the new design.
+
+---
+
+### 40. `DispatchAndWaitPreparationsActivity` — `ExecuteAsync` not idempotent; crash mid-loop spawns duplicate subworkflows
+
+**Status: Open — critical.**
+
+`ExecuteAsync` generates a fresh `Guid.NewGuid()` per store inside the dispatch loop, creates a subworkflow instance, and creates two bookmarks. With `ExecutingActivityStrategy`, Elsa commits the workflow state as "this activity is executing" **before** `ExecuteAsync` runs. If the process crashes partway through the loop (say, after dispatching stores 1–2 out of 5), on restart Elsa re-runs `ExecuteAsync` from scratch:
+
+- New GUIDs are generated for **all** stores including the two already dispatched.
+- All 5 subworkflows are re-dispatched — stores 1 and 2 each now have two running subworkflow instances with different `prepCommandId`s.
+- The old subworkflows for stores 1 and 2 complete and send `store-prep-completed-{old-id}` signals, but the parent has no bookmarks for those old IDs. The signals are discarded; the counter is not incremented.
+- The new batch of 5 all complete and the parent finishes correctly.
+- **Net effect:** the allocation service and preparation service each receive duplicate commands for stores 1 and 2. This is silent over-processing, not a hang — but it violates at-most-once delivery to downstream systems.
+
+**Fix:** Generate all `prepCommandId`s upfront, store them (alongside their store IDs) in `WorkflowExecutionContext.Properties` before the dispatch loop begins. On each `ExecuteAsync` invocation, check Properties first — if the IDs are already there, use them; only dispatch subworkflows that don't already have a matching Elsa workflow instance (checked via `CorrelationId`). This makes `ExecuteAsync` idempotent.
+
+---
+
+### 41. `WaitForStorePreparationOutcomeActivity` — callback not crash-safe after parent signal is sent
+
+**Status: Open — medium.**
+
+`OnOutcomeReceivedAsync` (1) applies containers via HTTP, (2) sends `store-prep-completed-{prepCommandId}` to the parent, (3) calls `CompleteActivityAsync`. With `AutoBurn = true`, the bookmark is consumed the moment the callback is entered. If the process crashes between steps (2) and (3):
+
+- On restart, `ExecuteAsync` runs again and creates a new bookmark for `preparation-completed-{prepCommandId}`.
+- But `ElsaPreparationOutcomeHandler` has already processed that event — it will not send the stimulus again.
+- The new bookmark never fires → the subworkflow is permanently suspended.
+- Meanwhile the parent's counter was already incremented in step (2), so the parent may complete while this subworkflow is zombied in MongoDB.
+
+**Fix:** Before sending the parent signal in the callback, write a "callback-completed" flag to `WorkflowExecutionContext.Properties`. At the start of `ExecuteAsync`, check for that flag — if set, the callback already ran, so skip bookmark creation and call `CompleteActivityAsync` immediately. This makes the activity restartable without re-registering a dead bookmark.
+
+---
+
+### 42. `OnStorePrepFailedAsync` — sibling bookmarks orphaned on child failure
+
+**Status: Open — medium.**
+
+When one child's fault signal fires, `OnStorePrepFailedAsync` throws, faulting the `FulfilmentWorkflow`. The remaining success/failure bookmarks for all other in-flight children remain registered in Elsa's bookmark store against a now-faulted workflow instance.
+
+As those children eventually complete, they send signals that Elsa tries to match. Elsa will find the bookmarks and attempt to resume a faulted workflow — behaviour depends on Elsa's internal handling of bookmark delivery to faulted instances, but at minimum those bookmarks are never garbage-collected by application code and accumulate in `workflow_bookmarks`.
+
+**Fix:** Before throwing in `OnStorePrepFailedAsync`, explicitly cancel or remove all remaining sibling bookmarks. Elsa does not expose a direct "delete all bookmarks for this activity instance" API, but iterating `context.WorkflowExecutionContext.Bookmarks` and removing those matching the activity's pattern is possible. Alternatively, accept the accumulation as a low-frequency operational concern and add a MongoDB TTL index on the `workflow_bookmarks` collection.
+
+---
+
+### 43. `ElsaPreparationOutcomeHandler` — `WorkflowInstanceId` still missing from `StimulusMetadata`
+
+**Status: Open — medium (updated from #34).**
+
+Finding #34 flagged this in the previous architecture where `PrepareCommand` was supposed to carry `ParentWorkflowInstanceId`. That class no longer exists. The issue persists in the new design: `ElsaPreparationOutcomeHandler` sends the `preparation-completed-{prepCommandId}` stimulus without a `WorkflowInstanceId`, forcing Elsa to scan all bookmarks globally.
+
+In the current architecture, the correct target is the `StorePreparationSubWorkflow` instance. The subworkflow's Elsa instance ID is known at dispatch time (returned by `client.WorkflowInstanceId` in `DispatchAndWaitPreparationsActivity`). Fixing this requires threading that instance ID to the preparation service (in the preparation command POST body) and returning it in `PreparationOutcomePayload`, so `ElsaPreparationOutcomeHandler` can set `StimulusMetadata.WorkflowInstanceId`.
+
+Without this fix, correctness is maintained (the `prepCommandId` UUID in the event name is unique enough to avoid cross-matching), but at scale with thousands of concurrent workflows the global scan degrades performance and adds lock contention on the bookmark store.
+
+---
+
+### 44. `SendStorePreparationCommandActivity` — duplicates `DurableRetryActivity` boilerplate
+
+**Status: Open — low.**
+
+`SendStorePreparationCommandActivity` implements its own durable retry loop (count key in Properties, exponential backoff, bookmark + `IWorkflowScheduler`) rather than extending `DurableRetryActivity`. The reason is that `DurableRetryActivity` throws on exhaustion, whereas this activity must set `Succeeded = false` and call `CompleteActivityAsync` so the subworkflow can branch via `If/Else` rather than fault.
+
+The divergence is justified but the ~40 lines of boilerplate are identical. `DurableRetryActivity` could gain a `virtual OnExhaustedAsync(ActivityExecutionContext context)` method — the default implementation throws; subclasses can override to set an output and complete cleanly. This would reduce `SendStorePreparationCommandActivity` to just the HTTP call and the exhaustion override.
+
+---
+
+### 45. `DispatchAndWaitPreparationsActivity` — null-bang on `AllocationResult` input
+
+**Status: Open — low.**
+
+```csharp
+var result = context.Get(AllocationResult)!;
+```
+
+If `AllocationResult` is not wired correctly at the workflow level, this throws `NullReferenceException` with no diagnostic message. Same class of issue as finding #37 (now closed), now present in the replacement activity. Replace with a guarded check and a clear `InvalidOperationException`.
+
+---
+
+### 46. `OnOutcomeReceivedAsync` — `OperationCanceledException` swallowed in container POST
+
+**Status: Open — low.**
+
+```csharp
+catch (Exception ex)
+{
+    logger.LogWarning(ex, "...failed to apply containers...");
+}
+```
+
+The broad catch in the container application block captures `OperationCanceledException`. On graceful shutdown, the activity logs a warning and continues instead of propagating cancellation. This is the same class of bug as fixed in #27 and still open in #33.
+
+**Fix:** Add `when (ex is not OperationCanceledException)` to the catch guard.
+
+---
+
+### 47. Stale open findings closed by the subworkflow redesign
+
+**Status: Documentation.**
+
+The following findings from earlier passes reference classes that no longer exist:
+
+- **#37** (`WaitForPreparationsActivity` — null-bang on `PrepareCommands`): `WaitForPreparationsActivity` was deleted. `DispatchAndWaitPreparationsActivity` has the analogous issue documented as #45 above.
+- **#38** (`WaitForPreparationsActivity` — zero-command deadlock): Replaced activity correctly guards the zero-allocation case on lines 31–36 of `DispatchAndWaitPreparationsActivity`. **This finding is now closed.**
+- **#34** (`PrepareCommand.ParentWorkflowInstanceId`): `PrepareCommand` no longer exists. The underlying concern is carried forward in #43 above.
+- **#18** (`WaitForPreparationsActivity` couples workflow to domain repository): `WaitForPreparationsActivity` no longer exists. The same coupling now appears in `DispatchAndWaitPreparationsActivity.OnStorePrepSignalReceivedAsync` → `IFulfilmentRepository.IncrementPrepCompletedAsync`. The architectural concern from #18 still applies.
+
+---
+
+### 48. `WorkflowDefinitionHandle.ByDefinitionId` resolves to latest — subworkflow versioning risk
+
+**Status: Open — low.**
+
+```csharp
+WorkflowDefinitionHandle.ByDefinitionId(nameof(StorePreparationSubWorkflow))
+```
+
+`ByDefinitionId` resolves to the latest published version at dispatch time. If `StorePreparationSubWorkflow` is updated and republished mid-deployment while a `FulfilmentWorkflow` is running, sibling children spawned before and after the deployment boundary run different versions of the subworkflow. This is typically harmless in practice but worth knowing — use `ByDefinitionVersionId` and pin the version in configuration if sibling-version consistency is required.
+
+---
+
 ## Summary
 
 | # | Finding | Severity | Status |
@@ -460,7 +585,7 @@ The paragraph immediately below the "Fixed" status for #20 still reads:
 | 15 | In-process HTTP calls inside workflow activities | Medium | By design |
 | 16 | Non-durable retry in preparation outcome activity | Medium | **Fixed** |
 | 17 | AllocateFulfilmentActivity — overly complex manual retry | Medium | **Fixed** |
-| 18 | WaitForPreparationsActivity couples workflow to domain repository | Medium | **Open** |
+| 18 | DispatchAndWaitPreparationsActivity couples workflow to domain repository (WaitForPreparationsActivity renamed) | Medium | **Open** |
 | 19 | InitialiseFulfilmentPropertiesActivity — purpose unclear / may be unnecessary | Low | Verified necessary — Input lost on restart |
 | 20 | Two MongoDB databases — no transactional boundary | Low | **Fixed** — Elsa now uses `fms` database |
 | 21 | WaitForPreparationsActivity — $inc after failable POST → silent deadlock | Critical | **Fixed** |
@@ -476,9 +601,18 @@ The paragraph immediately below the "Fixed" status for #20 still reads:
 | 31 | Dictionary indexer instead of TryGetValue in AllocateFulfilmentActivity | Low | **Fixed** |
 | 32 | `BuildContainers` — `OrderLineNo` set to `line.Sku` (copy-paste bug, silent data corruption) | Medium | **Open** |
 | 33 | `TrySendOutcomeAsync` swallows `OperationCanceledException` on shutdown | Medium | **Open** |
-| 34 | `ElsaPreparationOutcomeHandler` — `WorkflowInstanceId` not set; `PrepareCommand` lacks `ParentWorkflowInstanceId` | Medium | **Open** |
+| 34 | `ElsaPreparationOutcomeHandler` — `WorkflowInstanceId` not set; `PrepareCommand` lacks `ParentWorkflowInstanceId` | Medium | Superseded by #43 |
 | 35 | `AllocateFulfilmentActivity` — null `AllocationResult` from `ReadFromJsonAsync` not guarded | Low | **Open** |
 | 36 | `Guid.Parse` in `/api/fulfilments` endpoint — `FormatException` returns 500 instead of 400 | Low | **Open** |
-| 37 | `WaitForPreparationsActivity` — null-bang `!` on `PrepareCommands` input | Low | **Open** |
-| 38 | `WaitForPreparationsActivity` — zero-command case is a silent deadlock | Low | **Open** |
+| 37 | `WaitForPreparationsActivity` — null-bang `!` on `PrepareCommands` input | Low | Closed — activity deleted; see #45 |
+| 38 | `WaitForPreparationsActivity` — zero-command case is a silent deadlock | Low | **Fixed** — replacement activity guards correctly |
 | 39 | Analysis doc — stale `fms-workflows` paragraph under #20 contradicts Fixed status | Docs | **Open** |
+| 40 | `DispatchAndWaitPreparationsActivity` — `ExecuteAsync` not idempotent; crash mid-loop spawns duplicate subworkflows | Critical | **Fixed** — plan split into `InitialisePreparationPlanActivity` |
+| 41 | `WaitForStorePreparationOutcomeActivity` — callback not crash-safe after parent signal is sent | Medium | **Open** |
+| 42 | `OnStorePrepFailedAsync` — sibling bookmarks orphaned on child failure | Medium | **Open** |
+| 43 | `ElsaPreparationOutcomeHandler` — `WorkflowInstanceId` still missing from `StimulusMetadata` | Medium | **Open** |
+| 44 | `SendStorePreparationCommandActivity` — duplicates `DurableRetryActivity` boilerplate | Low | **Open** |
+| 45 | `DispatchAndWaitPreparationsActivity` — null-bang on `AllocationResult` input | Low | **Open** |
+| 46 | `OnOutcomeReceivedAsync` — `OperationCanceledException` swallowed in container POST | Low | **Open** |
+| 47 | Stale findings #34, #37, #38 closed or superseded by subworkflow redesign | Docs | **Open** |
+| 48 | `WorkflowDefinitionHandle.ByDefinitionId` resolves to latest — subworkflow versioning risk | Low | **Open** |

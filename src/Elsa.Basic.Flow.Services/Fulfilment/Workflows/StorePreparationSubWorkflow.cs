@@ -20,7 +20,7 @@ public class StorePreparationSubWorkflow : WorkflowBase
                 {
                     Succeeded = new Output<bool>(sendSucceeded)
                 },
-                new If(ctx => sendSucceeded.Get(ctx))
+                new If(sendSucceeded.Get)
                 {
                     Then = new WaitForStorePreparationOutcomeActivity(),
                     Else = new NotifyParentOfFaultActivity()

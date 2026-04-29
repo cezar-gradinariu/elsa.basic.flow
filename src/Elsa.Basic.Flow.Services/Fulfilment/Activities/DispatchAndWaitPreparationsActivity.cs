@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Elsa.Basic.Flow.Domain;
-using Elsa.Basic.Flow.Services.Allocation;
 using Elsa.Basic.Flow.Services.Fulfilment.Workflows;
 using Elsa.Workflows;
 using Elsa.Workflows.Models;
@@ -15,49 +14,45 @@ namespace Elsa.Basic.Flow.Services.Fulfilment.Activities;
 
 internal class DispatchAndWaitPreparationsActivity : Activity
 {
-    private const string TotalKey      = "_dpwa_total";
-    private const string FulfilmentKey = "_dpwa_fulfilment_id";
-
-    public Input<AllocationResult>? AllocationResult { get; set; }
-    public Input<string>?           FulfilmentId     { get; set; }
-
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        var result       = context.Get(AllocationResult)!;
-        var fulfilmentId = context.Get(FulfilmentId) ?? string.Empty;
-        var props        = context.WorkflowExecutionContext.Properties;
-        var logger       = context.GetRequiredService<ILogger<DispatchAndWaitPreparationsActivity>>();
+        var props  = context.WorkflowExecutionContext.Properties;
+        var logger = context.GetRequiredService<ILogger<DispatchAndWaitPreparationsActivity>>();
 
-        if (result.StoreAllocations.Count == 0)
+        var total = props.TryGetValue(InitialisePreparationPlanActivity.TotalKey, out var t)
+            ? Convert.ToInt32(t) : 0;
+
+        if (total == 0)
         {
-            logger.LogWarning("[FulfilmentWorkflow] No store allocations — skipping preparations");
+            logger.LogWarning("[FulfilmentWorkflow] No store preparations planned — skipping");
             await context.CompleteActivityAsync();
             return;
         }
 
-        props[TotalKey]      = result.StoreAllocations.Count;
-        props[FulfilmentKey] = fulfilmentId;
+        props.TryGetValue(InitialisePreparationPlanActivity.PlanKey,       out var planRaw);
+        props.TryGetValue(InitialisePreparationPlanActivity.FulfilmentKey,  out var fidRaw);
 
-        logger.LogInformation("[FulfilmentWorkflow] Dispatching {Count} store preparation subworkflow(s)", result.StoreAllocations.Count);
+        var plan         = JsonSerializer.Deserialize<List<PreparationPlanItem>>(planRaw?.ToString() ?? "[]") ?? [];
+        var fulfilmentId = fidRaw?.ToString() ?? string.Empty;
+
+        logger.LogInformation("[FulfilmentWorkflow] Dispatching {Count} store preparation subworkflow(s)", plan.Count);
 
         var runtime    = context.GetRequiredService<IWorkflowRuntime>();
         var dispatcher = context.GetRequiredService<IWorkflowDispatcher>();
 
-        foreach (var allocation in result.StoreAllocations)
+        foreach (var item in plan)
         {
-            var prepCommandId = Guid.NewGuid();
-
             var client = await runtime.CreateClientAsync(cancellationToken: context.CancellationToken);
             await client.CreateInstanceAsync(new CreateWorkflowInstanceRequest
             {
                 WorkflowDefinitionHandle = WorkflowDefinitionHandle.ByDefinitionId(nameof(StorePreparationSubWorkflow)),
-                CorrelationId            = $"store-prep-{prepCommandId}",
+                CorrelationId            = $"store-prep-{item.PrepCommandId}",
                 Input = new Dictionary<string, object>
                 {
-                    ["PrepCommandId"] = prepCommandId.ToString(),
+                    ["PrepCommandId"] = item.PrepCommandId.ToString(),
                     ["FulfilmentId"]  = fulfilmentId,
-                    ["StoreId"]       = allocation.StoreId,
-                    ["Lines"]         = JsonSerializer.Serialize(allocation.Lines)
+                    ["StoreId"]       = item.StoreId,
+                    ["Lines"]         = JsonSerializer.Serialize(item.Lines)
                 }
             }, context.CancellationToken);
 
@@ -68,30 +63,30 @@ internal class DispatchAndWaitPreparationsActivity : Activity
             context.CreateBookmark(new CreateBookmarkArgs
             {
                 BookmarkName = RuntimeStimulusNames.Event,
-                Stimulus     = new EventStimulus($"store-prep-completed-{prepCommandId}"),
+                Stimulus     = new EventStimulus($"store-prep-completed-{item.PrepCommandId}"),
                 Callback     = OnStorePrepSignalReceivedAsync,
                 AutoBurn     = true
             });
 
-            // Fault bookmark — fired by NotifyParentOfFaultActivity if the subworkflow fails.
-            // Prevents the parent from hanging on a bookmark that will never fire.
+            // Fault bookmark — fired by NotifyParentOfFaultActivity if the subworkflow fails permanently.
             context.CreateBookmark(new CreateBookmarkArgs
             {
                 BookmarkName = RuntimeStimulusNames.Event,
-                Stimulus     = new EventStimulus($"store-prep-failed-{prepCommandId}"),
+                Stimulus     = new EventStimulus($"store-prep-failed-{item.PrepCommandId}"),
                 Callback     = OnStorePrepFailedAsync,
                 AutoBurn     = true
             });
 
-            logger.LogInformation("[FulfilmentWorkflow] Subworkflow dispatched — store={StoreId}  prep={PrepId}", allocation.StoreId, prepCommandId);
+            logger.LogInformation("[FulfilmentWorkflow] Subworkflow dispatched — store={StoreId}  prep={PrepId}",
+                item.StoreId, item.PrepCommandId);
         }
     }
 
     private async ValueTask OnStorePrepSignalReceivedAsync(ActivityExecutionContext context)
     {
         var props = context.WorkflowExecutionContext.Properties;
-        var total = props.TryGetValue(TotalKey,      out var t) ? Convert.ToInt32(t) : 0;
-        var fid   = props.TryGetValue(FulfilmentKey, out var f) ? f?.ToString() ?? string.Empty : string.Empty;
+        var total = props.TryGetValue(InitialisePreparationPlanActivity.TotalKey,      out var t) ? Convert.ToInt32(t) : 0;
+        var fid   = props.TryGetValue(InitialisePreparationPlanActivity.FulfilmentKey, out var f) ? f?.ToString() ?? string.Empty : string.Empty;
 
         var logger = context.GetRequiredService<ILogger<DispatchAndWaitPreparationsActivity>>();
 

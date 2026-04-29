@@ -12,6 +12,7 @@ using Elsa.Workflows.CommitStates.Strategies;
 using Elsa.Workflows.Features;
 using Elsa.Workflows.Runtime.Options;
 using Elsa.Workflows.Runtime.Tasks;
+using Medallion.Threading.MongoDB;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Driver;
@@ -42,7 +43,14 @@ public static class WorkflowInfrastructureExtensions
         services.AddElsa(elsa =>
         {
             elsa.UseMongoDb(elsaMongoConnection);
-            elsa.UseWorkflowRuntime(r => r.UseMongoDb(_ => { }));
+            elsa.UseWorkflowRuntime(r =>
+            {
+                r.UseMongoDb(_ => { });
+                r.DistributedLockProvider = sp =>
+                    new MongoDistributedSynchronizationProvider(
+                        sp.GetRequiredService<IMongoDatabase>(),
+                        "elsa_distributed_locks");
+            });
             elsa.UseWorkflowManagement(m => m.UseMongoDb(_ => { }));
             elsa.UseScheduling(scheduling =>
             {

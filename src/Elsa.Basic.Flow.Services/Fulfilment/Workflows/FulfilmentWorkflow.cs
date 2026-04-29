@@ -23,11 +23,12 @@ public class FulfilmentWorkflow : WorkflowBase
                     FulfilmentId = new Output<string>(fulfilmentId),
                     Result       = new Output<AllocationResult>(allocationResult)
                 },
-                new DispatchAndWaitPreparationsActivity
+                new InitialisePreparationPlanActivity
                 {
                     AllocationResult = new Input<AllocationResult>(allocationResult),
                     FulfilmentId     = new Input<string>(fulfilmentId)
                 },
+                new DispatchAndWaitPreparationsActivity(),
                 new CompleteFulfilmentActivity
                 {
                     FulfilmentId = new Input<string>(fulfilmentId)

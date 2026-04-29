@@ -12,6 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="DistributedLock.MongoDB" Version="1.0.0" />
     <PackageReference Include="Elsa.Persistence.MongoDb" Version="3.6.*" />
     <PackageReference Include="Elsa.Scheduling" Version="3.6.*" />
     <PackageReference Include="Elsa.Workflows.Runtime" Version="3.6.*" />
